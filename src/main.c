@@ -48,23 +48,12 @@
 #define CMD_MCCK	13
 #define CMD_MCKELF	14
 
-/*
-char* ps2boot_region = "AEI";
-char* ps2boot_files_tab[]= {
-	"/BREXEC-SYSTEM/osdsys.elf",
-	"/BREXEC-SYSTEM/osd110.elf",
-	"/BREXEC-SYSTEM/osd120.elf",
-	"/BREXEC-SYSTEM/osd130.elf",
-	"/BREXEC-SYSTEM/osdmain.elf",
-	NULL
-};
-*/
 
 static void print_usage(int argc, char **argv)
 {
 	(void)argc;
-	printf("Copyright (C) 2023 - by Bucanero\nbased on ps3mca-tool by jimmikaelkael et al.\n");
-	printf("\n");
+	printf("Copyright (C) 2023 - by Bucanero\n");
+	printf("based on ps3mca-tool by jimmikaelkael et al.\n\n");
 	printf("Usage:\n");
 	printf("%s <VMC.file> <command> [<arguments>]\n", argv[0]);
 	printf("\n");
@@ -81,8 +70,6 @@ static void print_usage(int argc, char **argv)
 	printf("\t --remove-directory, -rmdir <mc path>\n");
 	printf("\t --remove, -rm <mc filepath>\n");
 	printf("\t --file-crosslink, -cl <real mc filepath> <dummy mc filepath>\n");
-//	printf("\t --content-key, -ck <disk kelf filepath>\n");
-//	printf("\t --sign-kelf, -k <disk kelf filepath> <card kelf filepath>\n");
 	printf("\n");
 }
 
@@ -201,7 +188,7 @@ static int cmd_list(char *path)
 	fd = mcio_mcDopen(path);
 	if (fd >= 0) {
 		struct io_dirent dirent;
-		printf("---------- Filename ----------  |  Type  | Last Modification (UTC)\n");
+		printf("---------- Filename ----------  |  Type  |   Size   | Last Modification (UTC)\n");
 		do {
 			r = mcio_mcDread(fd, &dirent);
 			if ((r)) { /* && (strcmp(dirent.name, ".")) && (strcmp(dirent.name, ".."))) { */
@@ -214,6 +201,7 @@ static int cmd_list(char *path)
 					printf("| <file> | ");
 				else
 					printf("| <dir>  | ");
+				printf("%8d | ", dirent.stat.size);
 				printf("%02d/%02d/%04d-", dirent.stat.mtime.Month, dirent.stat.mtime.Day, dirent.stat.mtime.Year);
 				printf("%02d:%02d:%02d", dirent.stat.mtime.Hour, dirent.stat.mtime.Min, dirent.stat.mtime.Sec);
 				printf("\n");
@@ -351,106 +339,7 @@ static int cmd_crosslink(char *real_filepath, char *dummy_filepath)
 	mcio_mcCreateCrossLinkedFile(real_filepath, dummy_filepath);
 	return 0;
 }
-/*
-static int cmd_mcck(char *disk_kelf_path)
-{
-	int i;
-	uint8_t ContentKey[32];
 
-	FILE *fh = fopen(disk_kelf_path, "rb");
-	if (fh == NULL)
-		return -1;
-
-	uint8_t *buf = malloc(0xffff);
-	if (buf == NULL)
-		return -2;
-
-	int r = fread(buf, 1, 0xffff, fh);
-	if (r < 0)
-		return -3;
-
-	fclose(fh);
-
-	mcio_mcEncryptContentKey(buf, ContentKey);
-
-	printf("PS2 Memory Card Content Key\n");
-	printf("target Kelf file: '%s'\n", disk_kelf_path);
-	printf("Kbit: ");
-	for (i=0; i<16; i++)
-		printf("%02x ", ContentKey[i]);
-	printf("\n");
-	printf("Kc  : ");
-	for (i=0; i<16; i++)
-		printf("%02x ", ContentKey[i+16]);
-	printf("\n");
-
-	free(buf);
-
-	return 0;
-}
-
-static int cmd_mckelf(char *disk_kelf_path, char *card_kelf_path)
-{
-	int i;
-	uint8_t ContentKey[32];
-
-	FILE *fh = fopen(disk_kelf_path, "rb");
-	if (fh == NULL)
-		return -1;
-
-	fseek(fh, 0, SEEK_END);
-	int filesize = ftell(fh);
-	if (!filesize) {
-		fclose(fh);
-		return -2;
-	}
-	fseek(fh, 0, SEEK_SET);
-
-	uint8_t *buf = malloc(filesize);
-	if (buf == NULL)
-		return -3;
-
-	int r = fread(buf, 1, filesize, fh);
-	if (r != filesize)
-		return -4;
-
-	fclose(fh);
-
-	mcio_mcEncryptContentKey(buf, ContentKey);
-
-	printf("PS2 Memory Card Content Key\n");
-	printf("target Kelf file: '%s'\n", card_kelf_path);
-	printf("Kbit: ");
-	for (i=0; i<16; i++)
-		printf("%02x ", ContentKey[i]);
-	printf("\n");
-	printf("Kc  : ");
-	for (i=0; i<16; i++)
-		printf("%02x ", ContentKey[i+16]);
-	printf("\n");
-
-	fh = fopen(card_kelf_path, "wb");
-	if (fh == NULL)
-		return -5;
-
-	r = fwrite(buf, 1, filesize, fh);
-	if (r != filesize)
-		return -6;
-
-	int CK_offset = mcio_mcGetKelfContentKeyOffset(buf);
-	fseek(fh, CK_offset, SEEK_SET);
-
-	r = fwrite(ContentKey, 1, 32, fh);
-	if (r != 32)
-		return -6;
-
-	fclose(fh);
-
-	free(buf);
-
-	return 0;
-}
-*/
 
 int main(int argc, char **argv)
 {
@@ -657,18 +546,6 @@ int main(int argc, char **argv)
 			if (r < 0)
 				printf("Error: can't crosslink file '%s'... (%d)\n", cmd_args[0], r);
 		}
-/*
-		else if (cmd == CMD_MCCK) {
-			r = cmd_mcck(cmd_args[0]);
-			if (r < 0)
-				printf("Error: can't get the Content Key... (%d)\n", r);
-		}
-		else if (cmd == CMD_MCKELF) {
-			r = cmd_mckelf(cmd_args[0], cmd_args[1]);
-			if (r < 0)
-				printf("Error: can't sign the kelf... (%d)\n", r);
-		}
-*/
 	}
 
 	/* save changes */

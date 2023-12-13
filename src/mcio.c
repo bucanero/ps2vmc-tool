@@ -101,7 +101,7 @@ struct MCFatCluster {
 } __attribute__((packed));
 
 #define MAX_CACHEENTRY		36
-uint8_t mcio_cachebuf[MAX_CACHEENTRY * MCIO_CLUSTERSIZE];
+static uint8_t mcio_cachebuf[MAX_CACHEENTRY * MCIO_CLUSTERSIZE];
 struct MCCacheEntry mcio_entrycache[MAX_CACHEENTRY];
 struct MCCacheEntry *mcio_mccache[MAX_CACHEENTRY];
 
@@ -129,17 +129,15 @@ struct MCFsEntry { /* size = 512 */
 } __attribute__((packed));
 
 #define MAX_CACHEDIRENTRY	3
-struct MCFsEntry mcio_dircache[MAX_CACHEDIRENTRY];
+static struct MCFsEntry mcio_dircache[MAX_CACHEDIRENTRY];
 
 
-uint8_t mcio_pagebuf[1056];
-uint8_t *mcio_pagedata[32];
-uint8_t mcio_eccdata[512]; /* size for 32 ecc */
+static uint8_t mcio_pagebuf[1056];
+static uint8_t *mcio_pagedata[32];
+static uint8_t mcio_eccdata[512]; /* size for 32 ecc */
 
-uint8_t mcio_backupbuf[16384];
-
-int32_t mcio_badblock = 0;
-int32_t mcio_replacementcluster[16];
+static int32_t mcio_badblock = 0;
+static int32_t mcio_replacementcluster[16];
 
 static const uint8_t mcio_xortable[256] = {
 	0x00, 0x87, 0x96, 0x11, 0xA5, 0x22, 0x33, 0xB4,
@@ -199,8 +197,6 @@ struct MCFHandle { /* size = 48 */
 #define MAX_FDHANDLES	3
 struct MCFHandle mcio_fdhandles[MAX_FDHANDLES];
 
-struct sceMcStDateTime mcio_fsmodtime;
-
 static int Card_FileClose(int fd);
 
 
@@ -223,18 +219,7 @@ static void long_multiply(uint32_t v1, uint32_t v2, uint32_t *HI, uint32_t *LO)
 
 	*HI += a * c;
 }
-/*
-static uint8_t calcEDC(uint8_t *buf, int size)
-{
-	uint8_t checksum = 0;
-	int i;
 
-	for (i=0; i<size; i++)
-		checksum ^= buf[i];
-
-	return checksum;
-}
-*/
 static void Card_DataChecksum(uint8_t *pagebuf, uint8_t *ecc)
 {
 	uint8_t *p, *p_ecc;
@@ -317,7 +302,7 @@ static int mcio_chrpos(char *str, char chr)
 	return p - str;
 }
 
-void mcio_getmcrtime(struct sceMcStDateTime *mc_time)
+static void mcio_getmcrtime(struct sceMcStDateTime *mc_time)
 {
 	time_t rawtime;
 	struct tm *ptm;
@@ -333,179 +318,11 @@ void mcio_getmcrtime(struct sceMcStDateTime *mc_time)
 	mc_time->Month = ptm->tm_mon + 1;
 	append_le_uint16((uint8_t *)&mc_time->Year, ptm->tm_year + 1900);
 }
-/*
-static int CardAuth_Cmd(uint8_t cmd, uint8_t subcmd)
-{
-	memset((void *)&iodata->mc_data, 0, 5);
-	iodata->mc_data[0] = 0x81;
-	iodata->mc_data[1] = cmd;
-	iodata->mc_data[2] = subcmd;
-	iodata->mc_data_len = 5;
-	append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-	usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-	usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-	if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-		return sceMcResFailAuth;
 
-	return sceMcResSucceed;
-}
-
-static int CardAuth_Cmd_Read(uint8_t cmd, uint8_t subcmd, uint8_t *data)
-{
-	memset((void *)&iodata->mc_data, 0, 14);
-	iodata->mc_data[0] = 0x81;
-	iodata->mc_data[1] = cmd;
-	iodata->mc_data[2] = subcmd;
-	iodata->mc_data_len = 14;
-	append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-	usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-	usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-	if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-		return sceMcResFailAuth;
-	memrcpy(data, &iodata->mc_data[4], 8);
-
-	return sceMcResSucceed;
-}
-
-static int CardAuth_Cmd_Write(uint8_t cmd, uint8_t subcmd, uint8_t *data)
-{
-	memset((void *)&iodata->mc_data, 0, 14);
-	memrcpy(&iodata->mc_data[3], data, 8);
-	iodata->mc_data[11] = calcEDC(&iodata->mc_data[3], 8);
-	iodata->mc_data[0] = 0x81;
-	iodata->mc_data[1] = cmd;
-	iodata->mc_data[2] = subcmd;
-	iodata->mc_data_len = 14;
-	append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-	usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-	usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-	if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-		return sceMcResFailAuth;
-
-	return sceMcResSucceed;
-}
-*/
-static int CardAuth_Reset(void)
-{
-	int retries = 0;
-
-	while (retries++ < 5) {
-//		if (CardAuth_Cmd(0xf3, 0x00) == 0)
-			break;
-	}
-
-	if (retries >= 5)
-		return sceMcResFailResetAuth;
-
-	return sceMcResSucceed;
-}
-/*
-static int Card_Changed(void)
-{
-	int retries = 0;
-
-	while (retries++ < 5) {
-
-		memset((void *)&iodata->mc_data, 0, 4);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x11;
-		iodata->mc_data_len = 4;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[3] != 0x66)
-			break;
-	}
-
-	if (retries >= 5)
-		return sceMcResChangedCard;
-
-	return sceMcResSucceed;
-}
-
-static int Card_Validate(void)
-{
-	int retries = 0;
-
-	while (retries++ < 5) {
-
-		memset((void *)&iodata->mc_data, 0, 5);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x28;
-		iodata->mc_data_len = 5;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[4] != 0x66)
-			break;
-	}
-
-	if (retries >= 5)
-		return sceMcResFailDetect;
-
-	return sceMcResSucceed;	
-}
-
-static int Card_SetTerminationCode(void)
-{
-	int retries = 0;
-
-	while (retries++ < 5) {
-
-		memset((void *)&iodata->mc_data, 0, 5);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x27;
-		iodata->mc_data[2] = 0x5a;
-		iodata->mc_data_len = 5;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[4] == 0x5a)
-			break;
-	}
-
-	if (retries >= 5)
-		return sceMcResFailDetect2;
-
-	return sceMcResSucceed;
-}
-*/
 static int Card_GetSpecs(uint16_t *pagesize, uint16_t *blocksize, int32_t *cardsize, uint8_t *flags)
 {
-	int retries = 0;
-/*
-	while (retries++ < 5) {
-
-		memset((void *)&iodata->mc_data, 0, 13);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x26;
-		iodata->mc_data[2] = 0x5a;
-		iodata->mc_data_len = 13;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[12] == 0x5a) {
-			// checking EDC checksum
-			uint8_t r = calcEDC(&iodata->mc_data[3], 8);
-			if (r == iodata->mc_data[11])
-				break;
-		}
-	}
-*/
-	if (retries >= 5)
-		return sceMcResChangedCard;
+	if (memcmp(SUPERBLOCK_MAGIC, vmc_data, 28) != 0)
+		return sceMcResFailDetect2;
 
 	struct MCDevInfo *mcdi = (struct MCDevInfo *)vmc_data;
 
@@ -519,7 +336,6 @@ static int Card_GetSpecs(uint16_t *pagesize, uint16_t *blocksize, int32_t *cards
 
 static int Card_EraseBlock(int32_t block, uint8_t **pagebuf, uint8_t *eccbuf)
 {
-	int retries = 0;
 	int32_t size, ecc_offset, page;
 	uint8_t *p_ecc;
 	struct MCDevInfo *mcdi = (struct MCDevInfo *)&mcio_devinfo;
@@ -552,49 +368,10 @@ static int Card_EraseBlock(int32_t block, uint8_t **pagebuf, uint8_t *eccbuf)
 		}
 	}
 
-
-/*
-	while (retries++ < 5) {
-
-		memset((void *)&iodata->mc_data, 0, 9);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x21;
-		iodata->mc_data_len = 9;
-		append_le_uint32((uint8_t *)&iodata->mc_data[2], page);
-		iodata->mc_data[6] = calcEDC((uint8_t *)&iodata->mc_data[2], 4);
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[8] != 0x5a)
-			continue;
-
-		memset((void *)&iodata->mc_data, 0, 4);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x82;
-		iodata->mc_data_len = 4;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[3] != 0x5a)
-			continue;
-
-		break;
-	}
-*/
-	if (retries >= 5)
-		return sceMcResChangedCard;
-
 	if (pagebuf && eccbuf) { /* This part leave the first ecc byte of each block page in eccbuf */
 		memset(eccbuf, 0, 32);
 
 		page = 0;
-//		uint16_t pagesize = read_le_uint16((uint8_t *)&mcdi->pagesize);
 
 		while (page < blocksize) {
 			ecc_offset = page * pagesize;
@@ -615,34 +392,10 @@ static int Card_EraseBlock(int32_t block, uint8_t **pagebuf, uint8_t *eccbuf)
 	}
 
 	return sceMcResSucceed;
-/*
-	retries = 0;
-	while (retries++ < 100) {
-
-		memset((void *)&iodata->mc_data, 0, 4);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x12;
-		iodata->mc_data_len = 4;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[3] == 0x5a)
-			return sceMcResSucceed;
-	}
-
-	if (iodata->mc_data[3] == 0x66)
-		return sceMcResFailReplace;
-
-	return sceMcResNoFormat;
-	*/
 }
 
 static int Card_WritePageData(int32_t page, uint8_t *pagebuf, uint8_t *eccbuf)
 {
-	int i, retries = 0;
 	struct MCDevInfo *mcdi = (struct MCDevInfo *)&mcio_devinfo;
 
 	uint16_t pagesize = read_le_uint16((uint8_t *)&mcdi->pagesize);
@@ -655,88 +408,10 @@ static int Card_WritePageData(int32_t page, uint8_t *pagebuf, uint8_t *eccbuf)
 		memcpy(&vmc_data[page * (pagesize + ecc*sparesize) + pagesize], eccbuf, sparesize);
 
 	return sceMcResSucceed;
-/*
-	while (retries++ < 5) {
-
-		memset((void *)&iodata->mc_data, 0, 9);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x22;
-		append_le_uint32((uint8_t *)&iodata->mc_data[2], page);
-		iodata->mc_data[6] = calcEDC((uint8_t *)&iodata->mc_data[2], 4);
-		iodata->mc_data_len = 9;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[8] != 0x5a)
-			continue;
-
-		for (i=0; i<count; i++) {
-			memset((void *)&iodata->mc_data, 0, 134);
-			iodata->mc_data[0] = 0x81;
-			iodata->mc_data[1] = 0x42;
-			iodata->mc_data[2] = 128;
-			iodata->mc_data_len = 134;
-			memcpy(&iodata->mc_data[3], &pagebuf[i << 7], 128);
-			iodata->mc_data[131] = calcEDC((uint8_t *)&iodata->mc_data[3], 128);
-			append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-			usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-			usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-			if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-				continue;
-
-			if (iodata->mc_data[129] != 0x5a)
-				continue;
-		}
-
-		if (mcdi->cardflags & CF_USE_ECC) {
-			int32_t sparesize = pagesize >> 5;
-
-			memset((void *)&iodata->mc_data, 0, sparesize + 6);
-			iodata->mc_data[0] = 0x81;
-			iodata->mc_data[1] = 0x42;
-			iodata->mc_data[2] = (uint8_t)sparesize;
-			iodata->mc_data_len = sparesize + 6;
-			memcpy(&iodata->mc_data[3], eccbuf, sparesize);
-			iodata->mc_data[sparesize + 3] = calcEDC((uint8_t *)&iodata->mc_data[3], sparesize);
-			append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-			usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-			usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-			if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-				continue;
-
-			if (iodata->mc_data[sparesize + 5] != 0x5a)
-				continue;
-		}
-
-		memset((void *)&iodata->mc_data, 0, 4);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x81;
-		iodata->mc_data_len = 4;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[3] != 0x5a)
-			continue;
-
-		return sceMcResSucceed;
-	}
-
-	if (iodata->mc_data[3] == 0x66)
-		return sceMcResFailReplace;
-
-	return sceMcResNoFormat;
-*/
 }
 
 static int Card_ReadPageData(int32_t page, uint8_t *pagebuf, uint8_t *eccbuf)
 {
-	int i, retries = 0;
 	struct MCDevInfo *mcdi = (struct MCDevInfo *)&mcio_devinfo;
 
 	uint16_t pagesize = read_le_uint16((uint8_t *)&mcdi->pagesize);
@@ -747,194 +422,9 @@ static int Card_ReadPageData(int32_t page, uint8_t *pagebuf, uint8_t *eccbuf)
 
 	if (mcdi->cardflags & CF_USE_ECC)
 		memcpy(eccbuf, &vmc_data[page * (pagesize + ecc*sparesize) + pagesize], sparesize);
-/*
-	while (retries++ < 5) {
-
-		memset((void *)&iodata->mc_data, 0, 9);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x23;
-		append_le_uint32((uint8_t *)&iodata->mc_data[2], page);
-		iodata->mc_data[6] = calcEDC((uint8_t *)&iodata->mc_data[2], 4);
-		iodata->mc_data_len = 9;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[8] != 0x5a)
-			continue;
-
-		for (i=0; i<count; i++) {
-			memset((void *)&iodata->mc_data, 0, 134);
-			iodata->mc_data[0] = 0x81;
-			iodata->mc_data[1] = 0x43;
-			iodata->mc_data[2] = 128;
-			iodata->mc_data_len = 134;
-			append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-			usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-			usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-			if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-				continue;
-
-			if (iodata->mc_data[133] != 0x5a)
-				continue;
-
-			if (calcEDC((uint8_t *)&iodata->mc_data[4], 128) != iodata->mc_data[132])
-				continue;
-
-			memcpy(&pagebuf[i << 7], &iodata->mc_data[4], 128);
-		}
-
-		if (mcdi->cardflags & CF_USE_ECC) {
-			int32_t sparesize = pagesize >> 5;
-
-			memset((void *)&iodata->mc_data, 0, sparesize + 6);
-			iodata->mc_data[0] = 0x81;
-			iodata->mc_data[1] = 0x43;
-			iodata->mc_data[2] = (uint8_t)sparesize;
-			iodata->mc_data_len = sparesize + 6;
-			append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-			usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-			usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-			if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-				continue;
-
-			if (iodata->mc_data[sparesize + 5] != 0x5a)
-				continue;
-
-			if (calcEDC((uint8_t *)&iodata->mc_data[4], sparesize) != iodata->mc_data[sparesize + 6 - 2])
-				continue;
-
-			memcpy(eccbuf, &iodata->mc_data[4], sparesize);
-		}
-
-		memset((void *)&iodata->mc_data, 0, 4);
-		iodata->mc_data[0] = 0x81;
-		iodata->mc_data[1] = 0x81;
-		iodata->mc_data_len = 4;
-		append_le_uint16((uint8_t *)&iodata->dev_data, 0x42aa);
-		usbd_bulk_write((uint8_t *)iodata, iodata->mc_data_len + USBIO_DATA_HDRLEN);
-		usbd_bulk_read((uint8_t *)iodata, sizeof(usbio_buf));
-		if (read_le_uint16((uint8_t *)&iodata->dev_data) != UINT16_C(0x5a55))
-			continue;
-
-		if (iodata->mc_data[3] != 0x5a)
-			continue;
-
-		break;
-	}
-*/
-	if (retries >= 5)
-		return sceMcResChangedCard;
 
 	return sceMcResSucceed;
 }
-
-// static int Card_Authentificate(void)
-// {
-// 	uint8_t CardIV[8], CardMaterial[8], CardNonce[8];
-// 	uint8_t MechaChallenge1[8], MechaChallenge2[8], MechaChallenge3[8];
-// 	uint8_t CardResponse1[8], CardResponse2[8], CardResponse3[8];
-// 	uint8_t MechaNonce[8] = { 0xde, 0xad, 0xc0, 0xde, 0xde, 0xad, 0xc0, 0xde };
-
-// 	int r, auth_retry_count = 0;
-
-// 	/* we're doing several auth attempt, as the mcman does...
-// 	 * note that some slow cards (like chinese clones) sometimes
-// 	 * fails on the 1st authentification attempts (due to some
-// 	 * timeouts in auth stuff controlled by the MC it seems)
-// 	 */
-// 	while (auth_retry_count++ < 5) {
-
-// 		meResetCryptoContext();
-
-// 		/* auth reset */
-// 		CardAuth_Reset();
-
-// 		/* auth keys change */
-// 		CardAuth_Cmd(0xf7, 0x01);
-
-// 		/* auth 0x00 */
-// 		CardAuth_Cmd(0xf0, 0x00);
-
-// 		/* auth 0x01 */
-// 		CardAuth_Cmd_Read(0xf0, 0x01, CardIV);
-
-// 		/* auth 0x02 */
-// 		CardAuth_Cmd_Read(0xf0, 0x02, CardMaterial);
-
-// 		/* get the UniqueKey */
-// 		meCardCalcUniqueKey(CardIV, CardMaterial);
-
-// 		/* auth 0x03 */
-// 		CardAuth_Cmd(0xf0, 0x03);
-
-// 		/* auth 0x04 */
-// 		CardAuth_Cmd_Read(0xf0, 0x04, CardNonce);
-
-// 		/* auth 0x05 */
-// 		CardAuth_Cmd(0xf0, 0x05);
-
-// 		/* generate the MechaCon challenge */
-// 		meCardGenerateChallenge(CardIV, CardNonce, MechaNonce, MechaChallenge1, MechaChallenge2, MechaChallenge3);
-
-// 		/* auth 0x06 */
-// 		CardAuth_Cmd_Write(0xf0, 0x06, MechaChallenge3);
-
-// 		/* auth 0x07 */
-// 		CardAuth_Cmd_Write(0xf0, 0x07, MechaChallenge2);
-
-// 		/* auth 0x08 */
-// 		CardAuth_Cmd(0xf0, 0x08);
-
-// 		/* auth 0x09 */
-// 		CardAuth_Cmd(0xf0, 0x09);
-
-// 		/* auth 0x0a */
-// 		CardAuth_Cmd(0xf0, 0x0a);
-
-// 		/* auth 0x0b */
-// 		CardAuth_Cmd_Write(0xf0, 0x0b, MechaChallenge1);
-
-// 		/* auth 0x0c */
-// 		CardAuth_Cmd(0xf0, 0x0c);
-
-// 		/* auth 0x0d */
-// 		CardAuth_Cmd(0xf0, 0x0d);
-
-// 		/* auth 0x0e */
-// 		CardAuth_Cmd(0xf0, 0x0e);
-
-// 		/* auth 0x0f */
-// 		CardAuth_Cmd_Read(0xf0, 0x0f, CardResponse1);
-
-// 		/* auth 0x10 */
-// 		CardAuth_Cmd(0xf0, 0x10);
-
-// 		/* auth 0x11 */
-// 		CardAuth_Cmd_Read(0xf0, 0x11, CardResponse2);
-
-// 		/* auth 0x12 */
-// 		CardAuth_Cmd(0xf0, 0x12);
-
-// 		/* auth 0x13 */
-// 		CardAuth_Cmd_Read(0xf0, 0x13, CardResponse3);
-
-// 		/* auth 0x14 */
-// 		CardAuth_Cmd(0xf0, 0x14);
-
-// 		/* validate the card response */
-// 		r = meCardVerifyResponse(CardResponse1, CardResponse2, CardResponse3);
-// 		if (r == 0)
-// 			break;
-// 	}
-
-// 	if (r < 0)
-// 		return sceMcResFailAuth;
-
-// 	return sceMcResSucceed;
-// }
 
 static int Card_SetDeviceSpecs(void)
 {
@@ -1218,6 +708,7 @@ static int Card_FlushCacheEntry(struct MCCacheEntry *mce)
 	struct MCCacheEntry *pmce[16];
 	struct MCDevInfo *mcdi = (struct MCDevInfo *)&mcio_devinfo;
 	struct MCCacheEntry *mcee;
+	uint8_t mcio_backupbuf[16384];
 	uint8_t eccbuf[32];
 	uint8_t *p_page, *p_ecc;
 
@@ -2965,36 +2456,9 @@ static int Card_Probe(void)
 {
 	int r;
 	struct MCDevInfo *mcdi;
-/*
-	r = Card_Changed();
-	if (r == sceMcResSucceed) {
-		r = mcio_devinfo.cardform;
-		if (r)
-			return sceMcResSucceed;
-	}
-	else {
-		r = CardAuth_Reset();
-		if (r != sceMcResSucceed)
-			return r;
 
-		r = Card_Authentificate();
-		if (r != sceMcResSucceed)
-			return r;
-	}
-
-	r = Card_Validate();
-	if (r != sceMcResSucceed)
-		return r;
-*/
-//	Card_ClearCache();
-/*
-	r = Card_SetTerminationCode();
-	if (r != sceMcResSucceed)
-		return r;
-*/
 	r = Card_SetDeviceInfo();
 	if (r == sceMcResSucceed)
-//		return sceMcResChangedCard;
 		return sceMcResSucceed;
 
 	if (r != sceMcResNoFormat)
@@ -3343,6 +2807,7 @@ static int Card_FileClose(int fd)
 	uint16_t fmode;
 	struct MCFHandle *fh = (struct MCFHandle *)&mcio_fdhandles[fd];
 	struct MCFsEntry *fse1, *fse2;
+	struct sceMcStDateTime mcio_fsmodtime;
 
 	r = Card_ReadDirEntry(fh->cluster, fh->fsindex, &fse1);
 	if (r != sceMcResSucceed)
@@ -3992,41 +3457,3 @@ int mcio_mcRmDir(char *dirname)
 
 	return r;
 }
-
-// int mcio_mcGetKelfContentKeyOffset(uint8_t *KelfHeader)
-// {
-// 	return meGetContentKeyOffset(KelfHeader);
-// }
-
-// int mcio_mcEncryptContentKey(uint8_t *KelfHeader, uint8_t *ContentKey)
-// {
-// 	int i, r;
-
-// 	/* Card Auth is needed to fill crypto context */
-// 	r = Card_Authentificate();
-// 	if (r != sceMcResSucceed)
-// 		return r;
-
-// 	/* Decrypts ContentKey from disk signed Kelf Header */
-// 	meDecryptDiskContentKey(KelfHeader);
-
-// 	/* Encrypts the ContentKey with the SessionKey */
-// 	meEncryptCardContentKey(ContentKey);
-
-// 	/* Now send the encrypted ContentKey to internal's MC processor.
-// 	 * It will decrypt it with the SessionKey, and reencrypt it with
-// 	 * it's StorageKey
-// 	 */
-// 	for (i=0; i<4; i++) {
-// 		CardAuth_Cmd(0xf2, 0x50);
-// 		CardAuth_Cmd_Write(0xf2, 0x51, &ContentKey[i*8]);
-// 		CardAuth_Cmd(0xf2, 0x52);
-// 		CardAuth_Cmd_Read(0xf2, 0x53, &ContentKey[i*8]);
-// 	}
-
-// 	/* Here in ContentKey we get the valid ContentKey for kelf/mc, that is
-// 	 * E(Kstm, CK)
-// 	 */
-
-// 	return 0;
-// }
