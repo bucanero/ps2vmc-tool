@@ -188,7 +188,7 @@ static int cmd_list(char *path)
 	fd = mcio_mcDopen(path);
 	if (fd >= 0) {
 		struct io_dirent dirent;
-		printf("---------- Filename ----------  |  Type  |   Size   | Last Modification (UTC)\n");
+		printf("---------- Filename ----------  |  Type  |   Size   | Attribs | Last Modification (UTC)\n");
 		do {
 			r = mcio_mcDread(fd, &dirent);
 			if ((r)) { /* && (strcmp(dirent.name, ".")) && (strcmp(dirent.name, ".."))) { */
@@ -202,6 +202,13 @@ static int cmd_list(char *path)
 				else
 					printf("| <dir>  | ");
 				printf("%8d | ", dirent.stat.size);
+				printf("%c%c%c%c%c%c%c | ", (dirent.stat.mode & sceMcFileAttrReadable) ? 'r' : '-', 
+					(dirent.stat.mode & sceMcFileAttrWriteable) ? 'w' : '-',
+					(dirent.stat.mode & sceMcFileAttrExecutable) ? 'x' : '-',
+					(dirent.stat.mode & sceMcFileAttrDupProhibit) ? 'p' : '-',
+					(dirent.stat.mode & sceMcFileAttrHidden) ? 'H' : '-',
+					(dirent.stat.mode & sceMcFileAttrPDAExec) ? 'S' : '-',
+					(dirent.stat.mode & sceMcFileAttrPS1) ? '1' : '-');
 				printf("%02d/%02d/%04d-", dirent.stat.mtime.Month, dirent.stat.mtime.Day, dirent.stat.mtime.Year);
 				printf("%02d:%02d:%02d", dirent.stat.mtime.Hour, dirent.stat.mtime.Min, dirent.stat.mtime.Sec);
 				printf("\n");

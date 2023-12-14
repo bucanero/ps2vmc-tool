@@ -52,23 +52,23 @@ int mcio_init(void* vmc);
 int mcio_mcDetect(void);
 int mcio_mcGetInfo(int *pagesize, int *blocksize, int *cardsize, int *cardflags);
 int mcio_mcGetAvailableSpace(int *cardfree);
-int mcio_mcOpen(char *filename, int flag);
+int mcio_mcOpen(const char *filename, int flag);
 int mcio_mcClose(int fd);
 int mcio_mcRead(int fd, void *buf, int length);
 int mcio_mcWrite(int fd, void *buf, int length);
 int mcio_mcSeek(int fd, int offset, int origin);
-int mcio_mcCreateCrossLinkedFile(char *real_filename, char *dummy_filename);
-int mcio_mcDopen(char *dirname);
+int mcio_mcCreateCrossLinkedFile(const char *real_filename, const char *dummy_filename);
+int mcio_mcDopen(const char *dirname);
 int mcio_mcDclose(int fd);
 int mcio_mcDread(int fd, struct io_dirent *dirent);
-int mcio_mcMkDir(char *dirname);
+int mcio_mcMkDir(const char *dirname);
 int mcio_mcReadPage(int pagenum, void *buf);
 int mcio_mcUnformat(void);
 int mcio_mcFormat(void);
-int mcio_mcRemove(char *filename);
-int mcio_mcRmDir(char *dirname);
-int mcio_mcGetKelfContentKeyOffset(uint8_t *KelfHeader);
-int mcio_mcEncryptContentKey(uint8_t *KelfHeader, uint8_t *ContentKey);
+int mcio_mcRemove(const char *filename);
+int mcio_mcRmDir(const char *dirname);
+int mcio_mcStat(const char *filename, struct io_dirent *dirent);
+int mcio_mcSetStat(const char *filename, const struct io_dirent *dirent);
 
 /* MC error codes */
 #define sceMcResSucceed			 0
@@ -102,7 +102,7 @@ int mcio_mcEncryptContentKey(uint8_t *KelfHeader, uint8_t *ContentKey);
 #define sceMcFileCreateDir            0x0040
 #define sceMcFileAttrClosed           0x0080
 #define sceMcFileCreateFile           0x0200
-#define sceMcFile0400		      0x0400
+#define sceMcFile0400                 0x0400
 #define sceMcFileAttrPDAExec          0x0800
 #define sceMcFileAttrPS1              0x1000
 #define sceMcFileAttrHidden           0x2000

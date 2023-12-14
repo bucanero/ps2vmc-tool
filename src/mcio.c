@@ -319,6 +319,29 @@ static void mcio_getmcrtime(struct sceMcStDateTime *mc_time)
 	append_le_uint16((uint8_t *)&mc_time->Year, ptm->tm_year + 1900);
 }
 
+static void mcio_copy_dirent(struct io_dirent *dirent, const struct MCFsEntry *fse)
+{
+	memset((void *)dirent, 0, sizeof(struct io_dirent));
+	strncpy(dirent->name, fse->name, 32);
+	dirent->name[32] = 0;
+
+	dirent->stat.mode = read_le_uint16((uint8_t *)&fse->mode);
+	dirent->stat.attr = read_le_uint32((uint8_t *)&fse->attr);
+	dirent->stat.size = read_le_uint32((uint8_t *)&fse->length);
+
+	memcpy(&dirent->stat.ctime, &fse->created, sizeof(struct sceMcStDateTime));
+	memcpy(&dirent->stat.mtime, &fse->modified, sizeof(struct sceMcStDateTime));
+}
+
+static void mcio_copy_mcentry(struct MCFsEntry *fse, const struct io_dirent *dirent)
+{
+	append_le_uint16((uint8_t *)&fse->mode, dirent->stat.mode);
+	append_le_uint32((uint8_t *)&fse->attr, dirent->stat.attr);
+
+	memcpy(&fse->created, &dirent->stat.ctime, sizeof(struct sceMcStDateTime));
+	memcpy(&fse->modified, &dirent->stat.mtime, sizeof(struct sceMcStDateTime));
+}
+
 static int Card_GetSpecs(uint16_t *pagesize, uint16_t *blocksize, int32_t *cardsize, uint8_t *flags)
 {
 	if (memcmp(SUPERBLOCK_MAGIC, vmc_data, 28) != 0)
@@ -1706,7 +1729,7 @@ static int Card_SetDirEntryState(int32_t cluster, int32_t fsindex, int32_t flags
 	return sceMcResSucceed;
 }
 
-static int Card_CacheDirEntry(char *filename, struct MCCacheDir *pcacheDir, struct MCFsEntry **pfse, int unknown_flag)
+static int Card_CacheDirEntry(const char *filename, struct MCCacheDir *pcacheDir, struct MCFsEntry **pfse, int unknown_flag)
 {
 	int r;
 	int32_t fsindex, cluster, fmode;
@@ -2399,7 +2422,7 @@ lbl1:
 	return sceMcResSucceed;
 }
 
-static int Card_Delete(char *filename, int flags)
+static int Card_Delete(const char *filename, int flags)
 {
 	int r, i;
 	struct MCCacheDir cacheDir;
@@ -2481,7 +2504,7 @@ static void Card_InvFileHandles(void)
 	}
 }
 
-static int Card_FileOpen(char *filename, int flags)
+static int Card_FileOpen(const char *filename, int flags)
 {
 	int i, r;
 	int32_t fd, fsindex, fsoffset, fat_index, rdflag, wrflag, pos, mcfree;
@@ -3010,7 +3033,7 @@ int mcio_mcDetect(void)
 	return r;
 }
 
-int mcio_mcOpen(char *filename, int flag)
+int mcio_mcOpen(const char *filename, int flag)
 {
 	int r;
 
@@ -3173,7 +3196,65 @@ int mcio_mcSeek(int fd, int offset, int origin)
 	return fh->position = (r < 0) ? 0 : r;
 }
 
-int mcio_mcCreateCrossLinkedFile(char *real_filepath, char *dummy_filepath)
+int mcio_mcStat(const char *filename, struct io_dirent *dirent)
+{
+	int r, fd;
+	struct MCFsEntry *pfse;
+	struct MCCacheEntry *pmce;
+
+	fd = mcio_mcOpen(filename, sceMcFileAttrSubdir | sceMcFileAttrReadable);
+	if (fd < 0)
+		return fd;
+
+	struct MCFHandle *fh = (struct MCFHandle *)&mcio_fdhandles[fd];
+
+	r = Card_ReadDirEntry(fh->cluster, fh->fsindex, &pfse);
+	if (r < 0) {
+		mcio_mcClose(fd);
+		return r;
+	}
+
+	mcio_copy_dirent(dirent, pfse);
+	r = mcio_mcClose(fd);
+
+	return r;
+}
+
+int mcio_mcSetStat(const char *filename, const struct io_dirent *dirent)
+{
+	int r, fd;
+	struct MCFsEntry *pfse;
+	struct MCCacheEntry *pmce;
+
+	fd = mcio_mcOpen(filename, sceMcFileAttrSubdir | sceMcFileAttrReadable);
+	if (fd < 0)
+		return fd;
+
+	struct MCFHandle *fh = (struct MCFHandle *)&mcio_fdhandles[fd];
+
+	int32_t cluster = Card_GetDirEntryCluster(fh->cluster, fh->fsindex);
+	if (r < 0) {
+		mcio_mcClose(fd);
+		return r;
+	}
+	mcio_mcClose(fd);
+
+	r = Card_ReadCluster(cluster, &pmce);
+	if (r < 0)
+		return r;
+
+	pfse = (struct MCFsEntry *)pmce->cl_data;
+	mcio_copy_mcentry(pfse, dirent);
+	pmce->wr_flag = 1;
+
+	r = Card_FlushMCCache();
+	if (r != sceMcResSucceed)
+		return r;
+
+	return r;
+}
+
+int mcio_mcCreateCrossLinkedFile(const char *real_filepath, const char *dummy_filepath)
 {
 	int r, fd;
 	struct MCFsEntry *pfse;
@@ -3245,7 +3326,7 @@ int mcio_mcCreateCrossLinkedFile(char *real_filepath, char *dummy_filepath)
 	return r;
 }
 
-int mcio_mcDopen(char *dirname)
+int mcio_mcDopen(const char *dirname)
 {
 	int r;
 
@@ -3297,7 +3378,7 @@ int mcio_mcDread(int fd, struct io_dirent *dirent)
 
 	fh->position++;
 	memset((void *)dirent, 0, sizeof(struct io_dirent));
-	strcpy(dirent->name, fse->name);
+	strncpy(dirent->name, fse->name, 32);
 	dirent->name[32] = 0;
 
 	if (mode & sceMcFileAttrReadable)
@@ -3339,7 +3420,7 @@ int mcio_mcDread(int fd, struct io_dirent *dirent)
 	return 1;
 }
 
-int mcio_mcMkDir(char *dirname)
+int mcio_mcMkDir(const char *dirname)
 {
 	return mcio_mcOpen(dirname, 0x40);
 }
@@ -3424,7 +3505,7 @@ int mcio_mcFormat(void)
 	return 0;
 }
 
-int mcio_mcRemove(char *filename)
+int mcio_mcRemove(const char *filename)
 {
 	int r;
 
@@ -3441,7 +3522,7 @@ int mcio_mcRemove(char *filename)
 	return r;
 }
 
-int mcio_mcRmDir(char *dirname)
+int mcio_mcRmDir(const char *dirname)
 {
 	int r;
 
