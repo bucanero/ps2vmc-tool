@@ -34,6 +34,20 @@ struct sceMcStDateTime {
 	uint16_t Year;
 } __attribute__((packed));
 
+struct MCFsEntry { /* size = 512 */
+	uint16_t mode;
+	uint16_t unused;
+	uint32_t length;
+	struct sceMcStDateTime created;
+	uint32_t cluster;
+	uint32_t dir_entry;
+	struct sceMcStDateTime modified;
+	uint32_t attr;
+	uint32_t unused2[7];
+	char     name[32];
+	uint8_t  unused3[416];
+} __attribute__((packed));
+
 struct io_stat {
 	uint32_t mode;
 	uint32_t attr;
@@ -47,6 +61,23 @@ struct io_dirent {
 	char name[256];
 	uint32_t unknown;
 } __attribute__((packed));
+
+typedef struct {
+	struct sceMcStDateTime create;
+	struct sceMcStDateTime modified;
+	uint32_t numberOfFilesInDir;     // this is likely to be number of files in dir + 2 ("." and "..")
+	uint32_t attribute;              // (0x00008427 dir)
+	char filename[32];
+} ps2_MainDirInfo_t;
+
+typedef struct {
+	struct sceMcStDateTime create;
+	struct sceMcStDateTime modified;
+	uint32_t filesize;
+	uint32_t attribute;             // (0x00008497 file)
+	char filename[32];              // 'Real' PSV files have junk in this after text.
+	uint32_t positionInFile;
+} ps2_FileInfo_t;
 
 int mcio_init(void* vmc);
 int mcio_mcDetect(void);
