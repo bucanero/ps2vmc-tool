@@ -80,7 +80,7 @@ struct MCDevInfo {			/* size = 384 */
 	uint32_t unknown5;
 } __attribute__((packed));
 
-struct MCDevInfo mcio_devinfo;
+static struct MCDevInfo mcio_devinfo;
 
 struct MCCacheEntry {
 	int32_t   cluster;
@@ -102,31 +102,17 @@ struct MCFatCluster {
 
 #define MAX_CACHEENTRY		36
 static uint8_t mcio_cachebuf[MAX_CACHEENTRY * MCIO_CLUSTERSIZE];
-struct MCCacheEntry mcio_entrycache[MAX_CACHEENTRY];
-struct MCCacheEntry *mcio_mccache[MAX_CACHEENTRY];
+static struct MCCacheEntry mcio_entrycache[MAX_CACHEENTRY];
+static struct MCCacheEntry *mcio_mccache[MAX_CACHEENTRY];
 
-struct MCCacheEntry *pmcio_entrycache;
-struct MCCacheEntry **pmcio_mccache;
+static struct MCCacheEntry *pmcio_entrycache;
+static struct MCCacheEntry **pmcio_mccache;
 
 struct MCFatCache {
 	int32_t entry[(MCIO_CLUSTERFATENTRIES * 2)+1];
 } __attribute__((packed));
 
-struct MCFatCache mcio_fatcache;
-
-struct MCFsEntry { /* size = 512 */
-	uint16_t mode;
-	uint16_t unused;
-	uint32_t length;
-	struct sceMcStDateTime created;
-	uint32_t cluster;
-	uint32_t dir_entry;
-	struct sceMcStDateTime modified;
-	uint32_t attr;
-	uint32_t unused2[7];
-	char     name[32];
-	uint8_t  unused3[416];
-} __attribute__((packed));
+static struct MCFatCache mcio_fatcache;
 
 #define MAX_CACHEDIRENTRY	3
 static struct MCFsEntry mcio_dircache[MAX_CACHEDIRENTRY];
@@ -352,7 +338,7 @@ static int Card_GetSpecs(uint16_t *pagesize, uint16_t *blocksize, int32_t *cards
 	*flags = mcdi->cardflags;
 	*pagesize = read_le_uint16((uint8_t*)&mcdi->pagesize);
 	*blocksize = read_le_uint16((uint8_t*)&mcdi->blocksize);
-	*cardsize = read_le_uint32((uint8_t*)&mcdi->clusters_per_card) * read_le_uint32((uint8_t*)&mcdi->pages_per_cluster);
+	*cardsize = read_le_uint32((uint8_t*)&mcdi->clusters_per_card) * read_le_uint16((uint8_t*)&mcdi->pages_per_cluster);
 
 	return sceMcResSucceed;
 }
@@ -3223,7 +3209,7 @@ int mcio_mcStat(const char *filename, struct io_dirent *dirent)
 int mcio_mcSetStat(const char *filename, const struct io_dirent *dirent)
 {
 	int r, fd;
-	struct MCFsEntry *pfse;
+	struct MCFsEntry *pfse, *pfse2;
 	struct MCCacheEntry *pmce;
 
 	fd = mcio_mcOpen(filename, sceMcFileAttrSubdir | sceMcFileAttrReadable);
@@ -3233,6 +3219,7 @@ int mcio_mcSetStat(const char *filename, const struct io_dirent *dirent)
 	struct MCFHandle *fh = (struct MCFHandle *)&mcio_fdhandles[fd];
 
 	int32_t cluster = Card_GetDirEntryCluster(fh->cluster, fh->fsindex);
+	r = Card_ReadDirEntry(fh->cluster, fh->fsindex, &pfse2);
 	if (r < 0) {
 		mcio_mcClose(fd);
 		return r;
@@ -3244,6 +3231,11 @@ int mcio_mcSetStat(const char *filename, const struct io_dirent *dirent)
 		return r;
 
 	pfse = (struct MCFsEntry *)pmce->cl_data;
+	if (pfse->cluster != pfse2->cluster)
+		pfse++;
+	if (pfse->cluster != pfse2->cluster)
+		return r;
+
 	mcio_copy_mcentry(pfse, dirent);
 	pmce->wr_flag = 1;
 

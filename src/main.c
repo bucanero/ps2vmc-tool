@@ -32,21 +32,22 @@
 #define PROGRAM_NAME    "PS2VMC-TOOL"
 #define PROGRAM_VER     "1.0.0"
 
+#define PSV_MAGIC       0x50535600
+
 #define CMD_NONE	0
 #define CMD_MCINFO	1
 #define CMD_MCFREE	2
 #define CMD_MCIMG	3
 #define CMD_LIST	4
-#define CMD_EXTRACT	5
-#define CMD_MCUNFORMAT	6
+#define CMD_PSU_EXPORT	5
+#define CMD_EXTRACT	6
 #define CMD_MCFORMAT	7
 #define CMD_INJECT	8
 #define CMD_MKDIR	9
 #define CMD_RMDIR	10
 #define CMD_REMOVE	11
 #define CMD_CROSSLINK	12
-#define CMD_MCCK	13
-#define CMD_MCKELF	14
+#define CMD_PSV_IMPORT	13
 
 
 static void print_usage(int argc, char **argv)
@@ -55,13 +56,12 @@ static void print_usage(int argc, char **argv)
 	printf("Copyright (C) 2023 - by Bucanero\n");
 	printf("based on ps3mca-tool by jimmikaelkael et al.\n\n");
 	printf("Usage:\n");
-	printf("%s <VMC.file> <command> [<arguments>]\n", argv[0]);
+	printf("%s <VMC filepath> <command> [<arguments>]\n", argv[0]);
 	printf("\n");
 	printf("Available commands:\n");
 	printf("\t --mc-info, -i\n");
 	printf("\t --mc-free, -f\n");
 	printf("\t --mc-image, -img <output filepath>\n");
-	printf("\t --mc-unformat\n");
 	printf("\t --mc-format\n");
 	printf("\t --list, -ls <mc path>\n");
 	printf("\t --extract-file, -x <mc filepath> <output filepath>\n");
@@ -70,6 +70,8 @@ static void print_usage(int argc, char **argv)
 	printf("\t --remove-directory, -rmdir <mc path>\n");
 	printf("\t --remove, -rm <mc filepath>\n");
 	printf("\t --file-crosslink, -cl <real mc filepath> <dummy mc filepath>\n");
+	printf("\t --psv-import, -pi <PSV filepath>\n");
+	printf("\t --psu-export, -px <mc path> <output filepath>\n");
 	printf("\n");
 }
 
@@ -112,7 +114,7 @@ static int cmd_mcfree(void)
 	return 0;
 }
 
-static int cmd_mcimg(char *output)
+static int cmd_mcimg(const char *output)
 {
 	int r, i;
 	int pagesize, blocksize, cardsize, cardflags;
@@ -149,20 +151,98 @@ static int cmd_mcimg(char *output)
 	return 0;
 }
 
-static int cmd_mcunformat(void)
+static int cmd_mcexport(const char* path, const char* output)
 {
-	int r;
+	int r, fd, dd;
+	struct io_dirent dirent;
+	struct MCFsEntry entry;
+	char filepath[256];
 
-	printf("PS2 Memory Card unformat\n");
-	printf("Unformating MC...\n");
+	printf("Exporting '%s' to %s...\n", path, output);
 
-	r = mcio_mcUnformat();
-	if (r < 0)
-		return r;
+	dd = mcio_mcDopen(path);
+	if (dd < 0)
+		return dd;
 
-	printf("Memory card succesfully unformated.\n");
+	FILE *fh = fopen(output, "wb");
+	if (fh == NULL) {
+		return -1002;
+	}
 
-	return 0;
+	// Read main directory entry
+	mcio_mcStat(path, &dirent);
+
+	memset(&entry, 0, sizeof(entry));
+	memcpy(&entry.created, &dirent.stat.ctime, sizeof(struct sceMcStDateTime));
+	memcpy(&entry.modified, &dirent.stat.mtime, sizeof(struct sceMcStDateTime));
+	memcpy(entry.name, dirent.name, sizeof(entry.name));
+	entry.mode = dirent.stat.mode;
+	entry.length = dirent.stat.size;
+	fwrite(&entry, sizeof(entry), 1, fh);
+
+	// "."
+	memset(entry.name, 0, sizeof(entry.name));
+	strncpy(entry.name, ".", sizeof(entry.name));
+	entry.length = 0;
+	fwrite(&entry, sizeof(entry), 1, fh);
+
+	// ".."
+	strncpy(entry.name, "..", sizeof(entry.name));
+	fwrite(&entry, sizeof(entry), 1, fh);
+
+	do {
+		r = mcio_mcDread(dd, &dirent);
+		if (r && (strcmp(dirent.name, ".")) && (strcmp(dirent.name, ".."))) {
+			snprintf(filepath, sizeof(filepath), "%s/%s", path, dirent.name);
+			printf("Adding %-48s | %8d bytes\n", filepath, dirent.stat.size);
+
+			mcio_mcStat(filepath, &dirent);
+
+			memset(&entry, 0, sizeof(entry));
+			memcpy(&entry.created, &dirent.stat.ctime, sizeof(struct sceMcStDateTime));
+			memcpy(&entry.modified, &dirent.stat.mtime, sizeof(struct sceMcStDateTime));
+			memcpy(entry.name, dirent.name, sizeof(entry.name));
+			entry.mode = dirent.stat.mode;
+			entry.length = dirent.stat.size;
+			fwrite(&entry, sizeof(entry), 1, fh);
+
+			fd = mcio_mcOpen(filepath, sceMcFileAttrReadable | sceMcFileAttrFile);
+			if (fd < 0)
+				return fd;
+
+			uint8_t *p = malloc(dirent.stat.size);
+			if (p == NULL)
+				return -1000;
+
+			r = mcio_mcRead(fd, p, dirent.stat.size);
+			if (r != (int)dirent.stat.size) {
+				mcio_mcClose(fd);
+				free(p);
+				return -1001;
+			}
+
+			mcio_mcClose(fd);
+
+			r = fwrite(p, 1, dirent.stat.size, fh);
+			if (r != (int)dirent.stat.size) {
+				fclose(fh);
+				free(p);
+				return -1003;
+			}
+			free(p);
+
+			entry.length = 1024 - (dirent.stat.size % 1024);
+			while(entry.length--)
+				fputc(0xFF, fh);
+		}
+	} while (r);
+
+	mcio_mcDclose(dd);
+	fclose(fh);
+
+	printf("Save succesfully exported to %s.\n", output);
+
+	return dd;
 }
 
 static int cmd_mcformat(void)
@@ -192,15 +272,7 @@ static int cmd_list(char *path)
 		do {
 			r = mcio_mcDread(fd, &dirent);
 			if ((r)) { /* && (strcmp(dirent.name, ".")) && (strcmp(dirent.name, ".."))) { */
-				int tabnum = (32/7) - (strlen(dirent.name) / 7);
-				printf("%s ", dirent.name);
-				int i;
-				for (i=0; i<tabnum; i++)
-					printf("\t");
-				if (!(dirent.stat.mode & sceMcFileAttrSubdir))
-					printf("| <file> | ");
-				else
-					printf("| <dir>  | ");
+				printf("%-32s| %s | ", dirent.name, (dirent.stat.mode & sceMcFileAttrSubdir) ? "<dir> " : "<file>");
 				printf("%8d | ", dirent.stat.size);
 				printf("%c%c%c%c%c%c%c | ", (dirent.stat.mode & sceMcFileAttrReadable) ? 'r' : '-', 
 					(dirent.stat.mode & sceMcFileAttrWriteable) ? 'w' : '-',
@@ -322,6 +394,104 @@ static int cmd_inject(char *input, char *filepath)
 	return fd;
 }
 
+static int cmd_import(const char *input)
+{
+	int fd, r;
+	char filepath[256];
+    struct io_dirent entry;
+    ps2_MainDirInfo_t *ps2md;
+    ps2_FileInfo_t *ps2fi;
+
+	FILE *fh = fopen(input, "rb");
+	if (fh == NULL)
+		return -1000;
+
+	fread(&r, 1, sizeof(int), fh);
+	if (r != PSV_MAGIC) {
+		printf("Not a .PSV file\n");
+		fclose(fh);
+		return -1000;
+	}
+
+	fseek(fh, 0, SEEK_END);
+	int filesize = ftell(fh);
+	if (!filesize) {
+		fclose(fh);
+		return -1001;
+	}
+	fseek(fh, 0, SEEK_SET);
+
+	printf("Reading file: '%s'...\n", input);
+
+	uint8_t *p = malloc(filesize);
+	if (p == NULL) {
+		return -1002;
+	}
+
+	r = fread(p, 1, filesize, fh);
+	if (r != filesize) {
+		fclose(fh);
+		free(p);
+		return -1003;
+	}
+
+	fclose(fh);
+
+	if (p[0x3C] != 0x02) {
+		printf("Not a PS2 save file\n");
+		free(p);
+		return -1004;
+	}
+
+	ps2md = (ps2_MainDirInfo_t *)&p[0x68];
+	ps2fi = (ps2_FileInfo_t *)&ps2md[1];
+
+	printf("Writing data to: '/%s'...\n", ps2md->filename);
+
+	r = mcio_mcMkDir(ps2md->filename);
+	if (r < 0)
+		printf("Error: can't create directory '%s'... (%d)\n", ps2md->filename, r);
+	else
+		mcio_mcClose(r);
+
+	for (int i = read_le_uint32((uint8_t*)&ps2md->numberOfFilesInDir); i > 2; i--, ps2fi++)
+	{
+		filesize = read_le_uint32((uint8_t*)&ps2fi->filesize);
+
+		snprintf(filepath, sizeof(filepath), "%s/%s", ps2md->filename, ps2fi->filename);
+		printf("Adding %-48s | %8d bytes\n", filepath, filesize);
+		fd = mcio_mcOpen(filepath, sceMcFileCreateFile | sceMcFileAttrWriteable | sceMcFileAttrFile);
+		if (fd < 0) {
+			free(p);
+			return fd;
+		}
+
+		r = mcio_mcWrite(fd, &p[read_le_uint32((uint8_t*)&ps2fi->positionInFile)], filesize);
+		if (r != filesize) {
+			mcio_mcClose(fd);
+			free(p);
+			return -1004;
+		}
+		mcio_mcClose(fd);
+
+		mcio_mcStat(filepath, &entry);
+		memcpy(&entry.stat.ctime, &ps2fi->create, sizeof(struct sceMcStDateTime));
+		memcpy(&entry.stat.mtime, &ps2fi->modified, sizeof(struct sceMcStDateTime));
+		entry.stat.mode = read_le_uint32((uint8_t*)&ps2fi->attribute);
+		mcio_mcSetStat(filepath, &entry);
+	}
+
+	mcio_mcStat(ps2md->filename, &entry);
+	memcpy(&entry.stat.ctime, &ps2md->create, sizeof(struct sceMcStDateTime));
+	memcpy(&entry.stat.mtime, &ps2md->modified, sizeof(struct sceMcStDateTime));
+	entry.stat.mode = read_le_uint32((uint8_t*)&ps2md->attribute);
+	mcio_mcSetStat(ps2md->filename, &entry);
+
+	free(p);
+
+	return fd;
+}
+
 static int cmd_mkdir(char *path)
 {
 	printf("Creating directory: '%s'...\n", path);
@@ -376,9 +546,6 @@ int main(int argc, char **argv)
 			}
 			cmd = CMD_MCIMG;
 			cmd_args = &argv[3];
-		}
-		else if (!strcmp(argv[2], "--mc-unformat")) {
-			cmd = CMD_MCUNFORMAT;
 		}
 		else if (!strcmp(argv[2], "--mc-format")) {
 			cmd = CMD_MCFORMAT;
@@ -439,20 +606,20 @@ int main(int argc, char **argv)
 			cmd = CMD_CROSSLINK;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--content-key") || !strcmp(argv[2], "-ck")) {
+		else if (!strcmp(argv[2], "--psv-import") || !strcmp(argv[2], "-pi")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
 				return 1;
 			}
-			cmd = CMD_MCCK;
+			cmd = CMD_PSV_IMPORT;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--sign-kelf") || !strcmp(argv[2], "-k")) {
-			if (argc < 4) {
+		else if (!strcmp(argv[2], "--psu-export") || !strcmp(argv[2], "-px")) {
+			if (argc < 3) {
 				print_usage(argc, argv);
 				return 1;
 			}
-			cmd = CMD_MCKELF;
+			cmd = CMD_PSU_EXPORT;
 			cmd_args = &argv[3];
 		}
 		else {
@@ -490,10 +657,10 @@ int main(int argc, char **argv)
 			if (r < 0)
 				printf("Error: can't create image file... (%d)\n", r);
 		}
-		else if (cmd == CMD_MCUNFORMAT) {
-			r = cmd_mcunformat();
+		else if (cmd == CMD_PSU_EXPORT) {
+			r = cmd_mcexport(cmd_args[0], cmd_args[1]);
 			if (r < 0)
-				printf("Error: can't unformat MC... (%d)\n", r);
+				printf("Error: can't export save to PSU... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();
@@ -552,6 +719,13 @@ int main(int argc, char **argv)
 			r = cmd_crosslink(cmd_args[0], cmd_args[1]);
 			if (r < 0)
 				printf("Error: can't crosslink file '%s'... (%d)\n", cmd_args[0], r);
+		}
+		else if (cmd == CMD_PSV_IMPORT) {
+			r = cmd_import(cmd_args[0]);
+			if (r == sceMcResNoFormat)
+				printf("Error: memory card is not formatted!\n");
+			else if (r < 0)
+				printf("Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
 		}
 	}
 
