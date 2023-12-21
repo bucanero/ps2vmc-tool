@@ -10,13 +10,12 @@ Copyright (C) 2023 - by Bucanero
 based on ps3mca-tool by jimmikaelkael et al.
 
 Usage:
-./ps2vmc-tool <VMC.file> <command> [<arguments>]
+./ps2vmc-tool <VMC filepath> <command> [<arguments>]
 
 Available commands:
 	 --mc-info, -i
 	 --mc-free, -f
 	 --mc-image, -img <output filepath>
-	 --mc-unformat
 	 --mc-format
 	 --list, -ls <mc path>
 	 --extract-file, -x <mc filepath> <output filepath>
@@ -25,6 +24,8 @@ Available commands:
 	 --remove-directory, -rmdir <mc path>
 	 --remove, -rm <mc filepath>
 	 --file-crosslink, -cl <real mc filepath> <dummy mc filepath>
+	 --psv-import, -pi <PSV filepath>
+	 --psu-export, -px <mc path> <output filepath>
 ```
 
 ## Building the sources
@@ -45,5 +46,5 @@ Based on ps3mca-tool by [jimmikaelkael](https://github.com/jimmikaelkael)
 
 ## License
 
-This software is licensed under GNU GPLv3, please review the LICENSE
+This software is licensed under GNU GPLv3, please review the [LICENSE](https://github.com/bucanero/ps2vmc-tool/blob/main/LICENSE)
 file for further details. No warranty provided.
