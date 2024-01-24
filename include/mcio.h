@@ -79,7 +79,7 @@ typedef struct {
 	uint32_t positionInFile;
 } ps2_FileInfo_t;
 
-int mcio_init(void* vmc);
+int mcio_init(void* vmc, size_t size);
 int mcio_mcDetect(void);
 int mcio_mcGetInfo(int *pagesize, int *blocksize, int *cardsize, int *cardflags);
 int mcio_mcGetAvailableSpace(int *cardfree);

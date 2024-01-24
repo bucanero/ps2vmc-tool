@@ -30,7 +30,7 @@
 #include "util.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
-#define PROGRAM_VER     "1.0.0"
+#define PROGRAM_VER     "1.1.0"
 
 #define PSV_MAGIC       0x50535600
 
@@ -633,7 +633,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	r = mcio_init(data);
+	r = mcio_init(data, dsize);
 	/*if (r == sceMcResNoFormat)
 		printf("Error: memory card not formated...\n");*/
 	if ((r != sceMcResNoFormat) && (r < 0)) {

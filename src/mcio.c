@@ -45,6 +45,7 @@ static const char SUPERBLOCK_MAGIC[]   = "Sony PS2 Memory Card Format ";
 static const char SUPERBLOCK_VERSION[] = "1.2.0.0\0\0\0\0";
 
 static uint8_t *vmc_data = NULL;
+static size_t vmc_size = 0;
 
 struct MCDevInfo {			/* size = 384 */
 	uint8_t  magic[28];		/* Superblock magic, on PS2 MC : "Sony PS2 Memory Card Format " */
@@ -335,7 +336,8 @@ static int Card_GetSpecs(uint16_t *pagesize, uint16_t *blocksize, int32_t *cards
 
 	struct MCDevInfo *mcdi = (struct MCDevInfo *)vmc_data;
 
-	*flags = mcdi->cardflags;
+	// check for non-ECC images
+	*flags = mcdi->cardflags & ((vmc_size % 0x800000 == 0) ? ~CF_USE_ECC : 0xFF);
 	*pagesize = read_le_uint16((uint8_t*)&mcdi->pagesize);
 	*blocksize = read_le_uint16((uint8_t*)&mcdi->blocksize);
 	*cardsize = read_le_uint32((uint8_t*)&mcdi->clusters_per_card) * read_le_uint16((uint8_t*)&mcdi->pages_per_cluster);
@@ -500,6 +502,7 @@ static int Card_ReadPage(int32_t page, uint8_t *pagebuf)
 				if ((retries == 4) && (!(ecres < -2)))
 					break;
 			}
+			else break;
 		}
 	} while (++retries < 5);
 
@@ -2984,11 +2987,12 @@ static int Card_FileWrite(int fd, void *buffer, int nbyte)
 }
 
 
-int mcio_init(void* vmc)
+int mcio_init(void* vmc, size_t size)
 {
 	int r;
 
 	vmc_data = vmc;
+	vmc_size = size;
 	Card_InitCache();
 
 	r = mcio_mcDetect();
