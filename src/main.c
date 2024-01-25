@@ -34,20 +34,23 @@
 
 #define PSV_MAGIC       0x50535600
 
-#define CMD_NONE	0
-#define CMD_MCINFO	1
-#define CMD_MCFREE	2
-#define CMD_MCIMG	3
-#define CMD_LIST	4
-#define CMD_PSU_EXPORT	5
-#define CMD_EXTRACT	6
-#define CMD_MCFORMAT	7
-#define CMD_INJECT	8
-#define CMD_MKDIR	9
-#define CMD_RMDIR	10
-#define CMD_REMOVE	11
-#define CMD_CROSSLINK	12
-#define CMD_PSV_IMPORT	13
+enum ps2vmc_cmd {
+	CMD_NONE = 0,
+	CMD_MCINFO,
+	CMD_MCFREE,
+	CMD_MCIMG,
+	CMD_ECC_IMG,
+	CMD_LIST,
+	CMD_PSU_EXPORT,
+	CMD_EXTRACT,
+	CMD_MCFORMAT,
+	CMD_INJECT,
+	CMD_MKDIR,
+	CMD_RMDIR,
+	CMD_REMOVE,
+	CMD_CROSSLINK,
+	CMD_PSV_IMPORT,
+};
 
 
 static void print_usage(int argc, char **argv)
@@ -62,6 +65,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --mc-info, -i\n");
 	printf("\t --mc-free, -f\n");
 	printf("\t --mc-image, -img <output filepath>\n");
+	printf("\t --ecc-image, -ecc <output filepath>\n");
 	printf("\t --mc-format\n");
 	printf("\t --list, -ls <mc path>\n");
 	printf("\t --extract-file, -x <mc filepath> <output filepath>\n");
@@ -134,7 +138,7 @@ static int cmd_mcimg(const char *output)
 	}
 
 	for (i = 0; i < (cardsize / pagesize); i++) {
-		mcio_mcReadPage(i, buf);
+		mcio_mcReadPage(i, buf, NULL);
 		r = fwrite(buf, 1, pagesize, fh);
 		if (r != pagesize) {
 			free(buf);
@@ -147,6 +151,52 @@ static int cmd_mcimg(const char *output)
 	free(buf);
 
 	printf("Exported raw memory card: %s\n", output);
+
+	return 0;
+}
+
+static int cmd_ecc_img(const char *output)
+{
+	int r, i;
+	int pagesize, blocksize, cardsize, cardflags;
+
+	r = mcio_mcGetInfo(&pagesize, &blocksize, &cardsize, &cardflags);
+	if (r < 0)
+		return -1;
+
+	FILE *fh = fopen(output, "wb");
+	if (fh == NULL)
+		return -2;
+
+	void *ecc = malloc(pagesize >> 5);
+	void *buf = malloc(pagesize);
+	if (buf == NULL || ecc == NULL) {
+		fclose(fh);
+		return -3;
+	}
+
+	for (i = 0; i < (cardsize / pagesize); i++) {
+		mcio_mcReadPage(i, buf, ecc);
+		r = fwrite(buf, 1, pagesize, fh);
+		if (r != pagesize) {
+			free(buf);
+			fclose(fh);
+			return -4;
+		}
+
+		r = fwrite(ecc, 1, pagesize >> 5, fh);
+		if (r != pagesize >> 5) {
+			free(buf);
+			fclose(fh);
+			return -4;
+		}
+	}
+
+	fclose(fh);
+	free(buf);
+	free(ecc);
+
+	printf("Exported ECC memory card: %s\n", output);
 
 	return 0;
 }
@@ -547,6 +597,14 @@ int main(int argc, char **argv)
 			cmd = CMD_MCIMG;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--ecc-image") || !strcmp(argv[2], "-ecc")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_ECC_IMG;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--mc-format")) {
 			cmd = CMD_MCFORMAT;
 		}
@@ -654,6 +712,11 @@ int main(int argc, char **argv)
 		}
 		else if (cmd == CMD_MCIMG) {
 			r = cmd_mcimg(cmd_args[0]);
+			if (r < 0)
+				printf("Error: can't create image file... (%d)\n", r);
+		}
+		else if (cmd == CMD_ECC_IMG) {
+			r = cmd_ecc_img(cmd_args[0]);
 			if (r < 0)
 				printf("Error: can't create image file... (%d)\n", r);
 		}

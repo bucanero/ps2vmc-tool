@@ -3466,9 +3466,24 @@ int mcio_mcGetAvailableSpace(int *cardfree)
 	return 0;
 }
 
-int mcio_mcReadPage(int pagenum, void *buf)
+int mcio_mcReadPage(int pagenum, void *buf, void *ecc)
 {
-	return Card_ReadPage((int32_t)pagenum, (uint8_t *)buf);
+	int r;
+
+	r = Card_ReadPage((int32_t)pagenum, (uint8_t *)buf);
+
+	if (ecc)
+	{
+		struct MCDevInfo *mcdi = (struct MCDevInfo *)&mcio_devinfo;
+		uint16_t pagesize = read_le_uint16((uint8_t *)&mcdi->pagesize);
+		uint8_t* p_ecc = ecc;
+
+		memset(ecc, 0, pagesize >> 5);
+		for (int size = 0; size < pagesize; size += 128, p_ecc += 3)
+			Card_DataChecksum(buf + size, p_ecc);
+	}
+
+	return r;
 }
 
 int mcio_mcUnformat(void)

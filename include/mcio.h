@@ -93,7 +93,7 @@ int mcio_mcDopen(const char *dirname);
 int mcio_mcDclose(int fd);
 int mcio_mcDread(int fd, struct io_dirent *dirent);
 int mcio_mcMkDir(const char *dirname);
-int mcio_mcReadPage(int pagenum, void *buf);
+int mcio_mcReadPage(int pagenum, void *buf, void *ecc);
 int mcio_mcUnformat(void);
 int mcio_mcFormat(void);
 int mcio_mcRemove(const char *filename);
