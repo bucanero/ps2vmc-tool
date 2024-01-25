@@ -5,7 +5,7 @@ This project aim to create a PC command line tool to manage their PS2 virtual me
 ## Usage
 
 ```
-PS2VMC-TOOL v1.0.0
+PS2VMC-TOOL v1.1.0
 Copyright (C) 2023 - by Bucanero
 based on ps3mca-tool by jimmikaelkael et al.
 
@@ -16,6 +16,7 @@ Available commands:
 	 --mc-info, -i
 	 --mc-free, -f
 	 --mc-image, -img <output filepath>
+	 --ecc-image, -ecc <output filepath>
 	 --mc-format
 	 --list, -ls <mc path>
 	 --extract-file, -x <mc filepath> <output filepath>
@@ -28,7 +29,7 @@ Available commands:
 	 --psu-export, -px <mc path> <output filepath>
 ```
 
-## Building the sources
+## Building the source code
 
 ```
 make

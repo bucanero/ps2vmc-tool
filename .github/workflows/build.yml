@@ -1,0 +1,47 @@
+name: Build binaries
+
+on:
+  push:
+  pull_request:
+  repository_dispatch:
+    types: [run_build]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Ubuntu requirements
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        echo "No requirements"
+        #sudo apt-get update
+        #sudo apt-get -y install autoconf automake bison flex gcc libelf-dev make texinfo libncurses5-dev patch python subversion wget zlib1g-dev libtool-bin python-dev bzip2 libgmp3-dev pkg-config
+    
+    - name: Install macOS requirements
+      if: matrix.os == 'macos-latest'
+      run: |
+        echo "No requirements"
+        #brew update
+        #brew install autoconf automake openssl libelf ncurses zlib gmp wget pkg-config
+
+    - name: Runs all the stages in the shell
+      run: |
+        make
+
+    - name: Get short SHA
+      run: echo "sha_name=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
+
+    - name: Compress output
+      run: |
+        tar -zcvf build.tar.gz ps2vmc-tool
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: build-${{ env.sha_name }}-${{matrix.os}}
+        path: build.tar.gz
