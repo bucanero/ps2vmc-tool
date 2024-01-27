@@ -30,7 +30,7 @@
 #include "util.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
-#define PROGRAM_VER     "1.1.0"
+#define PROGRAM_VER     "1.1.2"
 
 #define PSV_MAGIC       0x50535600
 
@@ -49,6 +49,7 @@ enum ps2vmc_cmd {
 	CMD_RMDIR,
 	CMD_REMOVE,
 	CMD_CROSSLINK,
+	CMD_PSU_IMPORT,
 	CMD_PSV_IMPORT,
 };
 
@@ -75,6 +76,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --remove, -rm <mc filepath>\n");
 	printf("\t --file-crosslink, -cl <real mc filepath> <dummy mc filepath>\n");
 	printf("\t --psv-import, -pi <PSV filepath>\n");
+	printf("\t --psu-import, -pu <PSU filepath>\n");
 	printf("\t --psu-export, -px <mc path> <output filepath>\n");
 	printf("\n");
 }
@@ -448,9 +450,9 @@ static int cmd_import(const char *input)
 {
 	int fd, r;
 	char filepath[256];
-    struct io_dirent entry;
-    ps2_MainDirInfo_t *ps2md;
-    ps2_FileInfo_t *ps2fi;
+	struct io_dirent entry;
+	ps2_MainDirInfo_t *ps2md;
+	ps2_FileInfo_t *ps2fi;
 
 	FILE *fh = fopen(input, "rb");
 	if (fh == NULL)
@@ -538,6 +540,89 @@ static int cmd_import(const char *input)
 	mcio_mcSetStat(ps2md->filename, &entry);
 
 	free(p);
+
+	return fd;
+}
+
+static int cmd_psu_import(const char *input)
+{
+	int fd, r;
+	char filepath[256];
+	struct io_dirent entry;
+	struct MCFsEntry psu_entry, file_entry;
+
+	FILE *fh = fopen(input, "rb");
+	if (fh == NULL)
+		return -1000;
+
+	fseek(fh, 0, SEEK_END);
+	r = ftell(fh);
+
+	if (!r || r % 512) {
+		printf("Not a .PSU file\n");
+		fclose(fh);
+		return -1000;
+	}
+
+	printf("Reading file: '%s'...\n", input);
+	fseek(fh, 0, SEEK_SET);
+
+	r = fread(&psu_entry, sizeof(struct MCFsEntry), 1, fh);
+	if (!r) {
+		fclose(fh);
+		return -1003;
+	}
+
+	// Skip "." and ".."
+	fseek(fh, sizeof(struct MCFsEntry)*2, SEEK_CUR);
+
+	printf("Writing data to: '/%s'...\n", psu_entry.name);
+
+	r = mcio_mcMkDir(psu_entry.name);
+	if (r < 0)
+		printf("Error: can't create directory '%s'... (%d)\n", psu_entry.name, r);
+	else
+		mcio_mcClose(r);
+
+	for (int i = psu_entry.length; i > 2; i--)
+	{
+		fread(&file_entry, 1, sizeof(struct MCFsEntry), fh);
+
+		snprintf(filepath, sizeof(filepath), "%s/%s", psu_entry.name, file_entry.name);
+		printf("Adding %-48s | %8d bytes\n", filepath, file_entry.length);
+		fd = mcio_mcOpen(filepath, sceMcFileCreateFile | sceMcFileAttrWriteable | sceMcFileAttrFile);
+		if (fd < 0) {
+			return fd;
+		}
+
+		uint8_t *p = malloc(file_entry.length);
+		fread(p, 1, file_entry.length, fh);
+
+		r = mcio_mcWrite(fd, p, file_entry.length);
+		free(p);
+
+		if (r != (int)file_entry.length) {
+			mcio_mcClose(fd);
+			return -1004;
+		}
+		mcio_mcClose(fd);
+
+		mcio_mcStat(filepath, &entry);
+		memcpy(&entry.stat.ctime, &file_entry.created, sizeof(struct sceMcStDateTime));
+		memcpy(&entry.stat.mtime, &file_entry.modified, sizeof(struct sceMcStDateTime));
+		entry.stat.mode = file_entry.mode;
+		mcio_mcSetStat(filepath, &entry);
+
+		r = 1024 - (file_entry.length % 1024);
+		if(r < 1024)
+			fseek(fh, r, SEEK_CUR);
+	}
+
+	mcio_mcStat(psu_entry.name, &entry);
+	memcpy(&entry.stat.ctime, &psu_entry.created, sizeof(struct sceMcStDateTime));
+	memcpy(&entry.stat.mtime, &psu_entry.modified, sizeof(struct sceMcStDateTime));
+	entry.stat.mode = psu_entry.mode;
+	mcio_mcSetStat(psu_entry.name, &entry);
 
 	return fd;
 }
@@ -664,6 +749,14 @@ int main(int argc, char **argv)
 			cmd = CMD_CROSSLINK;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--psu-import") || !strcmp(argv[2], "-pu")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_PSU_IMPORT;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--psv-import") || !strcmp(argv[2], "-pi")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
@@ -782,6 +875,13 @@ int main(int argc, char **argv)
 			r = cmd_crosslink(cmd_args[0], cmd_args[1]);
 			if (r < 0)
 				printf("Error: can't crosslink file '%s'... (%d)\n", cmd_args[0], r);
+		}
+		else if (cmd == CMD_PSU_IMPORT) {
+			r = cmd_psu_import(cmd_args[0]);
+			if (r == sceMcResNoFormat)
+				printf("Error: memory card is not formatted!\n");
+			else if (r < 0)
+				printf("Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_PSV_IMPORT) {
 			r = cmd_import(cmd_args[0]);
