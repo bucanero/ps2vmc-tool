@@ -1,5 +1,6 @@
 TOOLS	=	src/main
-COMMON	=	src/util.o src/mcio.o
+PS1TOOLS=	src/ps1main
+COMMON	=	src/util.o src/mcio.o src/ps1card.o
 DEPS	=	Makefile
 
 CC	=	gcc
@@ -8,12 +9,13 @@ CFLAGS	=	-g -O3 -W -I./include -I. -D_GNU_SOURCE
 
 OBJS	= $(COMMON) $(addsuffix .o, $(TOOLS))
 
-all: $(TOOLS)
+all: $(TOOLS) $(PS1TOOLS)
 
 $(TOOLS): %: %.o $(COMMON) $(DEPS)
 	$(CC) $(CFLAGS) -o ps2vmc-tool $< $(COMMON) $(LDFLAGS)
-#	$(CC) $(CFLAGS) -o $@ $< $(COMMON) $(LDFLAGS)
-#	mv src/main ps2vmc-tool
+
+$(PS1TOOLS): %: %.o $(COMMON) $(DEPS)
+	$(CC) $(CFLAGS) -o ps1vmc-tool $< $(COMMON) $(LDFLAGS)
 
 $(OBJS): %.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
