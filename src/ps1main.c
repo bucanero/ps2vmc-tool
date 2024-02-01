@@ -81,17 +81,20 @@ static void print_usage(int argc, char **argv)
 static int cmd_mcinfo(void)
 {
 	int free = 0, corrupt = 0, used = 0;
-	ps1McData_t *mcdata = getMemoryCardData();
+	ps1mcData_t *mcdata = getMemoryCardData();
+
+	if (!mcdata)
+		return -1;
 
 	for (int i = 0; i < PS1CARD_MAX_SLOTS; i++)
 	{
 		switch (mcdata[i].saveType)
 		{
-		case 0:
+		case PS1BLOCK_FORMATTED:
 			free++;
 			break;
 
-		case 7:
+		case PS1BLOCK_CORRUPTED:
 			corrupt++;
 			break;
 
@@ -103,8 +106,8 @@ static int cmd_mcinfo(void)
 
 	printf("PS1 Memory Card Information\n");
 	printf("Data slots: %d\n", PS1CARD_MAX_SLOTS);
-	printf("Block size: %d bytes\n", PS1CARD_SAVE_SIZE);
-	printf("MC size   : %d KB\n", 0x20000 / 1024);
+	printf("Block size: %d bytes\n", PS1CARD_BLOCK_SIZE);
+	printf("MC size   : %d KB\n", PS1CARD_SIZE / 1024);
 	printf("Blocks    : Used %d | Free %d | Corrupt %d\n", used, free, corrupt);
 
 	return 0;
@@ -113,17 +116,19 @@ static int cmd_mcinfo(void)
 static int cmd_mcfree(void)
 {
 	int cardfree = 0;
-	ps1McData_t *mcdata = getMemoryCardData();
+	ps1mcData_t *mcdata = getMemoryCardData();
+
+	if (!mcdata)
+		return -1;
 
 	printf("PS1 Memory Card free space\n");
 	printf("Calculating free space...\n");
 
 	for (int i = 0; i < PS1CARD_MAX_SLOTS; i++)
-		if (mcdata[i].saveType == 0)
+		if (mcdata[i].saveType == PS1BLOCK_FORMATTED)
 			cardfree++;
 
 	printf("Available space: %d Blocks\n", cardfree);
-
 	return 0;
 }
 
@@ -133,7 +138,6 @@ static int cmd_mcimg(const char *output, int type)
 		return -1;
 
 	printf("Exported PS1 memory card: %s\n", output);
-
 	return 0;
 }
 
@@ -145,23 +149,25 @@ static int cmd_mcformat(void)
 	formatMemoryCard();
 
 	printf("Memory card succesfully formated.\n");
-
 	return 0;
 }
 
 static int cmd_list(void)
 {
-	ps1McData_t* mcdata = getMemoryCardData();
+	ps1mcData_t* mcdata = getMemoryCardData();
+
+	if (!mcdata)
+		return -1;
 
 	printf("Slot | ---------- Filename ----------- |  Type  |   Size   | Prod. Code | Region\n");
     for (int i = 0; i < PS1CARD_MAX_SLOTS; i++)
 	{
-		if (mcdata[i].saveType != 1)
+		if (mcdata[i].saveType == PS1BLOCK_FORMATTED)
 			continue;
 
-		printf(" %2d  | %-32s| %s | ", i, mcdata[i].saveName, (mcdata[i].saveType == 1) ? "<save>" : "<bad> ");
+		printf(" %2d  | %-32s| %s | ", i, mcdata[i].saveName, (mcdata[i].saveType == PS1BLOCK_INITIAL) ? "<save>" : "<link>");
 		printf("%8d | ", mcdata[i].saveSize);
-		printf("%s | %c%c", mcdata[i].saveProdCode, mcdata[i].saveRegion & 0xFF, mcdata[i].saveRegion >> 8);
+		printf("%-10s | %c%c", mcdata[i].saveProdCode, mcdata[i].saveRegion & 0xFF, mcdata[i].saveRegion >> 8);
 		printf("\n");
 	}
 
@@ -176,16 +182,15 @@ static int cmd_inject(const char *input)
 		return r;
 
 	printf("Save '%s' (%d blocks) imported to memory card.\n", input, r);
-
 	return 0;
 }
 
 static int cmd_export(const char *slot, const char* filename, int type)
 {
 	int id = strtol(slot, NULL, 10);
-	ps1McData_t* mcdata = getMemoryCardData();
+	ps1mcData_t* mcdata = getMemoryCardData();
 
-	if (mcdata[id].saveType != 1)
+	if (!mcdata || mcdata[id].saveType != PS1BLOCK_INITIAL)
 		return -1000;
 
 	printf("Exporting save slot %d: '%s'...\n", id, mcdata[id].saveName);
@@ -199,11 +204,11 @@ static int cmd_export(const char *slot, const char* filename, int type)
 
 static int cmd_psv_export(const char *slot)
 {
-	int id = strtol(slot, NULL, 10);
-	ps1McData_t* mcdata = getMemoryCardData();
 	char tmp[4], filename[256];
+	int id = strtol(slot, NULL, 10);
+	ps1mcData_t* mcdata = getMemoryCardData();
 
-	if (mcdata[id].saveType != 1)
+	if (!mcdata || mcdata[id].saveType != PS1BLOCK_INITIAL)
 		return -1000;
 
 	printf("Exporting save slot %d: '%s'...\n", id, mcdata[id].saveName);
@@ -226,9 +231,9 @@ static int cmd_psv_export(const char *slot)
 static int cmd_remove(const char *slot)
 {
 	int id = strtol(slot, NULL, 10);
-	ps1McData_t* mcdata = getMemoryCardData();
+	ps1mcData_t* mcdata = getMemoryCardData();
 
-	if (mcdata[id].saveType != 1)
+	if (!mcdata || mcdata[id].saveType != PS1BLOCK_INITIAL)
 		return -1000;
 
 	printf("Removing file: '%s'...\n", mcdata[id].saveName);
@@ -244,7 +249,6 @@ int main(int argc, char **argv)
 	char **cmd_args = NULL;
 
 	printf(PROGRAM_NAME " v" PROGRAM_VER "\n");
-
 
 	if (argc-- < 3) {
 		print_usage(argc, argv);

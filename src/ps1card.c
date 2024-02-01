@@ -1,5 +1,8 @@
-﻿//based on PS1 Memory Card class
+﻿// PS1 Memory Card management by Bucanero
+//
+//based on PS1 Memory Card class
 //by Shendo 2009-2021 (MemcardRex)
+// https://github.com/ShendoXT/memcardrex/blob/master/MemcardRex/ps1card.cs
 
 #include <stdio.h>
 #include <string.h>
@@ -8,241 +11,105 @@
 
 #include "ps1card.h"
 #include "util.h"
+#include "aes.h"
 
-
-enum ps1block_type
-{
-    PS1BLOCK_FORMATTED,
-    PS1BLOCK_INITIAL,
-    PS1BLOCK_MIDDLELINK,
-    PS1BLOCK_ENDLINK,
-    PS1BLOCK_DELETED_INITIAL,
-    PS1BLOCK_DELETED_MIDDLELINK,
-    PS1BLOCK_DELETED_ENDLINK,
-    PS1BLOCK_CORRUPTED,
-};
 
 //Memory Card's type (0 - unset, 1 - raw, 2 - gme, 3 - vgs, 4 - vmp);
 static uint8_t cardType = PS1CARD_NULL;
 
 //Flag used to determine if the card has been edited since the last saving
-bool changedFlag = false;
+static bool changedFlag = false;
 
 //Complete Memory Card in the raw format (131072 bytes)
-static uint8_t rawMemoryCard[131072];
-
-//Header data for the GME Memory Card
-
-static ps1McData_t ps1saves[15];
-
-#define Color uint32_t
-typedef uint8_t Bitmap[256];
-
+static uint8_t rawMemoryCard[PS1CARD_SIZE];
+static ps1mcData_t ps1saves[PS1CARD_MAX_SLOTS];
 
 //Save comments (supported by .gme files only), 255 characters allowed
-char saveComments[15][256];
+static char saveComments[PS1CARD_MAX_SLOTS][256];
 
+//AES-CBC key and IV for MCX memory cards
+static const uint8_t mcxKey[] = { 0x81, 0xD9, 0xCC, 0xE9, 0x71, 0xA9, 0x49, 0x9B, 0x04, 0xAD, 0xDC, 0x48, 0x30, 0x7F, 0x07, 0x92 };
+static const uint8_t mcxIv[]  = { 0x13, 0xC2, 0xE7, 0x69, 0x4B, 0xEC, 0x69, 0x6D, 0x52, 0xCF, 0x00, 0x09, 0x2A, 0xC1, 0xF2, 0x72 };
 
-const uint8_t saveKey[] = { 0xAB, 0x5A, 0xBC, 0x9F, 0xC1, 0xF4, 0x9D, 0xE6, 0xA0, 0x51, 0xDB, 0xAE, 0xFA, 0x51, 0x88, 0x59 };
-const uint8_t saveIv[] = { 0xB3, 0x0F, 0xFE, 0xED, 0xB7, 0xDC, 0x5E, 0xB7, 0x13, 0x3D, 0xA6, 0x0D, 0x1B, 0x6B, 0x2C, 0xDC };
-
-const uint8_t mcxKey[] = { 0x81, 0xD9, 0xCC, 0xE9, 0x71, 0xA9, 0x49, 0x9B, 0x04, 0xAD, 0xDC, 0x48, 0x30, 0x7F, 0x07, 0x92 };
-const uint8_t mcxIv[] = { 0x13, 0xC2, 0xE7, 0x69, 0x4B, 0xEC, 0x69, 0x6D, 0x52, 0xCF, 0x00, 0x09, 0x2A, 0xC1, 0xF2, 0x72 };
-
-/*
-//Overwrite the contents of one byte array
-static void FillByteArray(uint8_t* destination, int start, int fill)
-{
-    for (int i = 0; i < destination.Length - start; i++)
-    {
-        destination[i + start] = (byte)fill;
-    }
-}
-
-//XORs a buffer with a constant
-static void XorWithByte(uint8_t* buffer, byte xorByte)
-{
-    for (int i = 0; i < buffer.Length; i++)
-    {
-        buffer[i] = (byte)(buffer[i] ^ xorByte);
-    }
-}
-
-//XORs one buffer with another
-static void XorWithIv(uint8_t* destBuffer, uint8_t* iv)
-{
-    for (int i = 0; i < 16; i++)
-    {
-        destBuffer[i] = (byte)(destBuffer[i] ^ iv[i]);
-    }
-}
 
 //Encrypts a buffer using AES CBC 128
-static uint8_t* AesCbcEncrypt(uint8_t* toEncrypt, uint8_t* key, uint8_t* iv)
+static void AesCbcEncrypt(uint8_t* toEncrypt, size_t len, const uint8_t* key, const uint8_t* iv)
 {
-    Aes aes = Aes.Create();
-    aes.Key = key;
-    aes.IV = iv;
-    aes.Padding = PaddingMode.Zeros;
-    aes.Mode = CipherMode.CBC;
+    struct AES_ctx ctx;
 
-    using (ICryptoTransform encryptor = aes.CreateEncryptor(key, iv))
-    {
-        using (MemoryStream msEncrypt = new MemoryStream())
-        {
-            using (CryptoStream csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
-            {
-                using (BinaryWriter bnEncrypt = new BinaryWriter(csEncrypt))
-                {
-                    bnEncrypt.Write(toEncrypt);
-                }
-                return msEncrypt.ToArray();
-            }
-        }
-    }
+    AES_init_ctx_iv(&ctx, key, iv);
+    AES_CBC_encrypt_buffer(&ctx, toEncrypt, len);
 }
 
 //Decrypts a buffer using AES CBC 128
-static uint8_t* AesCbcDecrypt(uint8_t* toDecrypt, uint8_t* key, uint8_t* iv)
+static void AesCbcDecrypt(uint8_t* toDecrypt, size_t len, const uint8_t* key, const uint8_t* iv)
 {
-    Aes aes = Aes.Create();
-    aes.Key = key;
-    aes.IV = iv;
-    aes.Padding = PaddingMode.Zeros;
-    aes.Mode = CipherMode.CBC;
+    struct AES_ctx ctx;
 
-    using (ICryptoTransform decryptor = aes.CreateDecryptor(key, iv))
-    {
-        using (MemoryStream msDecrypt = new MemoryStream(toDecrypt))
-        {
-            using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
-            {
-                using (BinaryReader bnDecrypt = new BinaryReader(csDecrypt))
-                {
-                    return bnDecrypt.ReadBytes(toDecrypt.Length - (toDecrypt.Length % 16));
-                }
-            }
-        }
-    }
+    AES_init_ctx_iv(&ctx, key, iv);
+    AES_CBC_decrypt_buffer(&ctx, toDecrypt, len);
 }
-
-//Encrypts a buffer using AES ECB 128
-static uint8_t* AesEcbEncrypt(uint8_t* toEncrypt, uint8_t* key, uint8_t* iv)
-{
-    Aes aes = Aes.Create();
-    aes.Key = key;
-    aes.IV = iv;
-    aes.Padding = PaddingMode.Zeros;
-    aes.Mode = CipherMode.ECB;
-
-    using (ICryptoTransform encryptor = aes.CreateEncryptor(key, iv))
-    {
-        using (MemoryStream msEncrypt = new MemoryStream())
-        {
-            using (CryptoStream csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
-            {
-                using (BinaryWriter bnEncrypt = new BinaryWriter(csEncrypt))
-                {
-                    bnEncrypt.Write(toEncrypt);
-                }
-                return msEncrypt.ToArray();
-            }
-        }
-    }
-}
-
-//Decrypts a buffer using AES ECB 128
-static uint8_t* AesEcbDecrypt(uint8_t* toDecrypt, uint8_t* key, uint8_t* iv)
-{
-    Aes aes = Aes.Create();
-    aes.Key = key;
-    aes.IV = iv;
-    aes.Padding = PaddingMode.Zeros;
-    aes.Mode = CipherMode.ECB;
-
-    using (ICryptoTransform decryptor = aes.CreateDecryptor(key, iv))
-    {
-        using (MemoryStream msDecrypt = new MemoryStream(toDecrypt))
-        {
-            using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
-            {
-                using (BinaryReader bnDecrypt = new BinaryReader(csDecrypt))
-                {
-                    return bnDecrypt.ReadBytes(toDecrypt.Length - (toDecrypt.Length % 16));
-                }
-            }
-        }
-    }
-}
-*/
 
 //Load Data from raw Memory Card
 static void loadDataFromRawCard(void)
 {
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         //Load header data
-        ps1saves[slotNumber].headerData = &rawMemoryCard[128 + (slotNumber * 128)];
+        ps1saves[slotNumber].headerData = &rawMemoryCard[PS1CARD_HEADER_SIZE * (slotNumber + 1)];
 
         //Load save 
-        ps1saves[slotNumber].saveData = &rawMemoryCard[8192 + (slotNumber * 8192)];
+        ps1saves[slotNumber].saveData = &rawMemoryCard[PS1CARD_BLOCK_SIZE * (slotNumber + 1)];
     }
 }
 
 //Recreate raw Memory Card
 static void loadDataToRawCard(bool fixData)
 {
-    //Check if data needs to be fixed or left as is (mandatory for FreePSXBoot)
-    if (fixData)
-    {
-        //Clear existing data
-        uint8_t rawMemoryCard[131072];
-
-        //Recreate the signature
-        rawMemoryCard[0] = 0x4D;        //M
-        rawMemoryCard[1] = 0x43;        //C
-        rawMemoryCard[127] = 0x0E;      //XOR (precalculated)
-
-        rawMemoryCard[8064] = 0x4D;     //M
-        rawMemoryCard[8065] = 0x43;     //C
-        rawMemoryCard[8191] = 0x0E;     //XOR (precalculated)
-    }
-
-    //This can be copied freely without fixing
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
-    {
-        //Load header data
-        ps1saves[slotNumber].headerData = &rawMemoryCard[128 + (slotNumber * 128)];
-        for (int currentByte = 0; currentByte < 128; currentByte++)
-        {
-//            rawMemoryCard[128 + (slotNumber * 128) + currentByte] = headerData[slotNumber][currentByte];
-        }
-
-        //Load save data
-        ps1saves[slotNumber].saveData = &rawMemoryCard[8192 + (slotNumber * 8192)];
-        for (int currentByte = 0; currentByte < 8192; currentByte++)
-        {
-//            rawMemoryCard[8192 + (slotNumber * 8192) + currentByte] = saveData[slotNumber][currentByte];
-        }
-    }
-
+    uint8_t* tmpMemoryCard;
 
     //Skip fixing data if it's not needed
     if (!fixData) return;
+
+    //Clear existing data
+    tmpMemoryCard = calloc(1, PS1CARD_SIZE);
+
+    //Recreate the signature
+    tmpMemoryCard[0] = 0x4D;        //M
+    tmpMemoryCard[1] = 0x43;        //C
+    tmpMemoryCard[127] = 0x0E;      //XOR (precalculated)
+
+    tmpMemoryCard[8064] = 0x4D;     //M
+    tmpMemoryCard[8065] = 0x43;     //C
+    tmpMemoryCard[8191] = 0x0E;     //XOR (precalculated)
+
+    //This can be copied freely without fixing
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
+    {
+        //Load header data
+        memcpy(&tmpMemoryCard[PS1CARD_HEADER_SIZE * (slotNumber + 1)], ps1saves[slotNumber].headerData, PS1CARD_HEADER_SIZE);
+
+        //Load save data
+        memcpy(&tmpMemoryCard[PS1CARD_BLOCK_SIZE * (slotNumber + 1)], ps1saves[slotNumber].saveData, PS1CARD_BLOCK_SIZE);
+    }
 
     //Create authentic data (just for completeness)
     for (int i = 0; i < 20; i++)
     {
         //Reserved slot typed
-        rawMemoryCard[2048 + (i * 128)] = 0xFF;
-        rawMemoryCard[2048 + (i * 128) + 1] = 0xFF;
-        rawMemoryCard[2048 + (i * 128) + 2] = 0xFF;
-        rawMemoryCard[2048 + (i * 128) + 3] = 0xFF;
+        tmpMemoryCard[2048 + (i * PS1CARD_HEADER_SIZE)] = 0xFF;
+        tmpMemoryCard[2048 + (i * PS1CARD_HEADER_SIZE) + 1] = 0xFF;
+        tmpMemoryCard[2048 + (i * PS1CARD_HEADER_SIZE) + 2] = 0xFF;
+        tmpMemoryCard[2048 + (i * PS1CARD_HEADER_SIZE) + 3] = 0xFF;
 
         //Next slot pointer doesn't point to anything
-        rawMemoryCard[2048 + (i * 128) + 8] = 0xFF;
-        rawMemoryCard[2048 + (i * 128) + 9] = 0xFF;
+        tmpMemoryCard[2048 + (i * PS1CARD_HEADER_SIZE) + 8] = 0xFF;
+        tmpMemoryCard[2048 + (i * PS1CARD_HEADER_SIZE) + 9] = 0xFF;
     }
+
+    memcpy(rawMemoryCard, tmpMemoryCard, PS1CARD_SIZE);
+    free(tmpMemoryCard);
+    return;
 }
 
 //Recreate GME header(add signature, slot description and comments)
@@ -270,78 +137,24 @@ static void fillGmeHeader(FILE* fp)
     gmeHeader[20] = 0x1;
     gmeHeader[21] = 0x4D;       //M
 
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         gmeHeader[22 + slotNumber] = ps1saves[slotNumber].headerData[0];
         gmeHeader[38 + slotNumber] = ps1saves[slotNumber].headerData[8];
 
-        //Convert string from UTF-16 to currently used codepage
-//        tempByteArray = Encoding.Convert(Encoding.Unicode, Encoding.Default, Encoding.Unicode.GetBytes(saveComments[slotNumber]));
-
         //Inject comments to GME header
         memcpy(&gmeHeader[64 + (256 * slotNumber)], saveComments[slotNumber], 256);
-//        for (int byteCount = 0; byteCount < tempByteArray.Length; byteCount++)
-//            gmeHeader[byteCount + 64 + (256*slotNumber)] = tempByteArray[byteCount];
     }
 
     fwrite(gmeHeader, 1, sizeof(gmeHeader), fp);
     return;
 }
 
-static bool IsMcxCard(uint8_t* rawCard)
-{
-    return false;
-}
-
-/*
-//Gets the HMAC checksum for .psv or .vmp saving
-static uint8_t* GetHmac(uint8_t* data, uint8_t* saltSeed)
-{
-    uint8_t* buffer = new byte[0x14];
-    uint8_t* salt = new byte[0x40];
-    uint8_t* temp = new byte[0x14];
-    uint8_t* hash1 = new byte[data.Length + 0x40];
-    uint8_t* hash2 = new byte[0x54];
-    SHA1 sha1 = SHA1.Create();
-
-    Array.Copy(saltSeed, buffer, 0x14);
-    Array.Copy(AesEcbDecrypt(buffer, saveKey, saveIv), buffer, 0x10);
-    Array.Copy(buffer, salt, 0x10);
-    Array.Copy(saltSeed, buffer, 0x10);
-    Array.Copy(AesEcbEncrypt(buffer, saveKey, saveIv), buffer, 0x14);
-
-    Array.Copy(buffer, 0, salt, 0x10, 0x10);
-    XorWithIv(salt, saveIv);
-    FillByteArray(buffer, 0x14, 0xFF);
-    Array.Copy(saltSeed, 0x10, buffer, 0, 0x4);
-    Array.Copy(salt, 0x10, temp, 0, 0x14);
-    XorWithIv(temp, buffer);
-    Array.Copy(temp, 0, salt, 0x10, 0x10);
-    Array.Copy(salt, temp, 0x14);
-    FillByteArray(salt, 0x14, 0);
-    Array.Copy(temp, salt, 0x14);
-    XorWithByte(salt, 0x36);
-
-    Array.Copy(salt, hash1, 0x40);
-    Array.Copy(data, 0, hash1, 0x40, data.Length);
-    Array.Copy(sha1.ComputeHash(hash1), buffer, 0x14);
-    XorWithByte(salt, 0x6A);
-    Array.Copy(salt, hash2, 0x40);
-    Array.Copy(buffer, 0, hash2, 0x40, 0x14);
-    return sha1.ComputeHash(hash2);
-
-}
-
-static uint8_t* DecryptMcxCard(uint8_t* rawCard)
-{
-    uint8_t* mcxCard = new byte[0x200A0];
-    Array.Copy(rawCard, mcxCard, mcxCard.Length);
-    return AesCbcDecrypt(mcxCard, mcxKey, mcxIv);
-}
 // Check if a given card is a MCX image
-static bool IsMcxCard(uint8_t* rawCard)
+static bool IsMcxCard(uint8_t* mcxCard)
 {
-    uint8_t* mcxCard = DecryptMcxCard(rawCard);
+    AesCbcDecrypt(mcxCard, 0x200A0, mcxKey, mcxIv);
+
     // Check for "MC" header 0x80 bytes in
     if (mcxCard[0x80] == 'M' && mcxCard[0x81] == 'C') 
         return true;
@@ -350,21 +163,25 @@ static bool IsMcxCard(uint8_t* rawCard)
 }
 
 //Generate encrypted MCX Memory Card
-static uint8_t* MakeMcxCard(uint8_t* rawCard)
+static void MakeMcxCard(const uint8_t* rawCard, FILE* fp)
 {
-    uint8_t* mcxCard = new byte[0x200A0];
-    uint8_t* hash;
+    uint8_t* mcxCard = malloc(0x200A0);
 
-    Array.Copy(rawCard, 0, mcxCard, 0x80, 0x20000);
+//    Array.Copy(rawCard, 0, mcxCard, 0x80, 0x20000);
+    memset(mcxCard, 0, 0x80);
+    memcpy(mcxCard + 0x80, rawCard, PS1CARD_SIZE);
     
-    using (SHA256 sha = SHA256.Create())
-        hash = sha.ComputeHash(mcxCard, 0, 0x20080);
+//    using (SHA256 sha = SHA256.Create())
+//        hash = sha.ComputeHash(mcxCard, 0, 0x20080);
+//    Array.Copy(hash, 0, mcxCard, 0x20080, 0x20);
+    memset(mcxCard + 0x20080, 0xFF, 0x20);
 
-    Array.Copy(hash, 0, mcxCard, 0x20080, 0x20);
-    Array.Copy(AesCbcEncrypt(mcxCard, mcxKey, mcxIv), 0, mcxCard, 0x0, 0x200A0);
-    return mcxCard;
+    AesCbcEncrypt(mcxCard, 0x200A0, mcxKey, mcxIv);
+    fwrite(mcxCard, 1, 0x200A0, fp);
+    free(mcxCard);
+
+    return;
 }
-*/
 
 //Generate unsigned VMP Memory Card
 static void setVmpCardHeader(FILE* fp)
@@ -418,13 +235,8 @@ static void setArHeader(const char* fileName, const char* saveName, FILE* fp)
 //            for (int byteCount = 0; byteCount < 22; byteCount++)
 //                arHeader[byteCount] = ps1saves[slotNumber].headerData[byteCount + 10];
 
-    //Convert save name to bytes
-//            arName = Encoding.Default.GetBytes(saveName[slotNumber]);
-
     //Copy save name to arHeader
     memcpy(&arHeader[21], arName, arName_Length);
-//            for (int byteCount = 0; byteCount < arName_Length; byteCount++)
-//                arHeader[byteCount + 21] = arName[byteCount];
 
     fwrite(arHeader, 1, sizeof(arHeader), fp);
     return;
@@ -435,7 +247,7 @@ static void calculateXOR(void)
     uint8_t XORchecksum = 0;
 
     //Cycle through each slot
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         //Set default value
         XORchecksum = 0;
@@ -453,7 +265,7 @@ static void calculateXOR(void)
 static void loadRegion(void)
 {
     //Cycle trough each slot
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         //Store save region
         ps1saves[slotNumber].saveRegion = (uint16_t)((ps1saves[slotNumber].headerData[11] << 8) | ps1saves[slotNumber].headerData[10]);
@@ -470,7 +282,7 @@ static void loadPalette(void)
     int blackFlag = 0;
 
     //Cycle through each slot on the Memory Card
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         //Clear existing data
         memset(ps1saves[slotNumber].iconPalette, 0, sizeof(uint32_t)*16);
@@ -503,21 +315,22 @@ static void loadIcons(void)
     int byteCount = 0;
 
     //Cycle through each slot
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         //Clear existing data
         memset(ps1saves[slotNumber].iconData, 0, 256*3);
 
         //Each save has 3 icons (some are data but those will not be shown)
-        for (int iconNumber = 0; iconNumber < 3; iconNumber++)
+        for (int iconNumber = 0; iconNumber < ps1saves[slotNumber].iconFrames; iconNumber++)
         {
-//            iconData[slotNumber][iconNumber] = new Bitmap(16, 16);
-            byteCount = 128 + ( 128 * iconNumber);
+            byteCount = 128 * (1 + iconNumber);
 
             for (int y = 0; y < 16; y++)
             {
                 for (int x = 0; x < 16; x += 2)
                 {
+                    ps1saves[slotNumber].iconData[iconNumber][y * 16 + x] = ps1saves[slotNumber].saveData[byteCount] & 0xF;
+                    ps1saves[slotNumber].iconData[iconNumber][y * 16 + x + 1] = ps1saves[slotNumber].saveData[byteCount] >> 4;
 //                    iconData[slotNumber][iconNumber].SetPixel(x, y, iconPalette[slotNumber][saveData[slotNumber][byteCount] & 0xF]);
 //                    iconData[slotNumber][iconNumber].SetPixel(x + 1, y, iconPalette[slotNumber][saveData[slotNumber][byteCount] >> 4]);
                     byteCount++;
@@ -531,7 +344,7 @@ static void loadIcons(void)
 static void loadIconFrames(void)
 {
     //Cycle through each slot
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         switch(ps1saves[slotNumber].saveData[2])
         {
@@ -578,7 +391,7 @@ static void setVGSheader(FILE* fp)
 //Get the type of the save slots
 static void loadSlotTypes(void)
 {
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         //Clear existing data
         ps1saves[slotNumber].saveType = 0;
@@ -626,7 +439,7 @@ static void loadStringData(void)
     //Temp array used for conversion
     char tempByteArray[64];
 
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
     {
         //Clear existing data
         memset(ps1saves[slotNumber].saveProdCode, 0, 11);
@@ -634,21 +447,12 @@ static void loadStringData(void)
         memset(ps1saves[slotNumber].saveName, 0, 21);
 
         //Copy Product code
-//        memset(tempByteArray, 0, sizeof(tempByteArray));
-//        for (int byteCount = 0; byteCount < 10; byteCount++)
-//            tempByteArray[byteCount] = ps1saves[slotNumber].headerData[byteCount + 12];
-
-        //Convert Product Code from currently used codepage to UTF-16
         strncpy(ps1saves[slotNumber].saveProdCode, (char*) &ps1saves[slotNumber].headerData[12], 10);
 
         //Copy Identifier
-//        memset(tempByteArray, 0, sizeof(tempByteArray));
-//        for (int byteCount = 0; byteCount < 8; byteCount++)
-//            tempByteArray[byteCount] = ps1saves[slotNumber].headerData[byteCount + 22];
-
-        //Convert Identifier from currently used codepage to UTF-16
         strncpy(ps1saves[slotNumber].saveIdentifier, (char*) &ps1saves[slotNumber].headerData[22], 8);
 
+        //Copy Save filename
         strncpy(ps1saves[slotNumber].saveName, (char*) &ps1saves[slotNumber].headerData[10], 20);
 
         //Copy bytes from save data to temp array
@@ -677,7 +481,7 @@ static void loadStringData(void)
 static void loadSaveSize(void)
 {
     //Fill data for each slot
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
         ps1saves[slotNumber].saveSize = (ps1saves[slotNumber].headerData[4] | (ps1saves[slotNumber].headerData[5]<<8) | (ps1saves[slotNumber].headerData[6]<<16));
 }
 
@@ -688,13 +492,13 @@ static int findSaveLinks(int initialSlotNumber, int* tempSlotList)
     int currentSlot = initialSlotNumber;
 
     //Maximum number of cycles is 15
-    for (int i = 0; i < 15; i++)
+    for (int i = 0; i < PS1CARD_MAX_SLOTS; i++)
     {
         //Add current slot to the list
         tempSlotList[j++] = currentSlot;
 
         //Check if next slot pointer overflows
-        if (currentSlot > 15) break;
+        if (currentSlot > PS1CARD_MAX_SLOTS) break;
 
         //Check if current slot is corrupted
         if (ps1saves[currentSlot].saveType == PS1BLOCK_CORRUPTED) break;
@@ -713,7 +517,7 @@ void toggleDeleteSave(int slotNumber)
 {
     //Get all linked saves
     int saveSlots_Length;
-    int saveSlots[16];
+    int saveSlots[PS1CARD_MAX_SLOTS];
     
     saveSlots_Length = findSaveLinks(slotNumber, saveSlots);
 
@@ -771,17 +575,13 @@ void toggleDeleteSave(int slotNumber)
 static void formatSlot(int slotNumber)
 {
     //Clear headerData
-    memset(ps1saves[slotNumber].headerData, 0, 128);
-//    for (int byteCount = 0; byteCount < 128; byteCount++)
-//        ps1saves[slotNumber].headerData[byteCount] = 0x00;
+    memset(ps1saves[slotNumber].headerData, 0, PS1CARD_HEADER_SIZE);
 
     //Clear saveData
-    memset(ps1saves[slotNumber].saveData, 0, 8192);
-//    for (int byteCount = 0; byteCount < 8192; byteCount++)
-//        ps1saves[slotNumber].saveData[byteCount] = 0x00;
+    memset(ps1saves[slotNumber].saveData, 0, PS1CARD_BLOCK_SIZE);
 
     //Clear GME comment for selected slot
-//    saveComments[slotNumber] = new string('\0',256);
+    memset(saveComments[slotNumber], 0, 256);
 
     //Place default values in headerData
     ps1saves[slotNumber].headerData[0] = 0xA0;
@@ -794,7 +594,7 @@ void formatSave(int slotNumber)
 {
     //Get all linked saves
     int saveSlots_Length;
-    int saveSlots[16];
+    int saveSlots[PS1CARD_MAX_SLOTS];
     
     saveSlots_Length = findSaveLinks(slotNumber, saveSlots);
 
@@ -811,8 +611,8 @@ void formatSave(int slotNumber)
     loadRegion();
     loadSaveSize();
     loadPalette();
-    loadIcons();
     loadIconFrames();
+    loadIcons();
 
     //Set changedFlag to edited
     changedFlag = true;
@@ -831,7 +631,7 @@ static int findFreeSlots(int slotCount, int* tempSlotList)
             else break;
 
             //Exit if next save would be over the limit of 15
-            if (slotNumber + slotCount > 15) break;
+            if (slotNumber + slotCount > PS1CARD_MAX_SLOTS) break;
         }
 
         if (j >= slotCount)
@@ -846,27 +646,21 @@ uint8_t* getSaveBytes(int slotNumber, uint32_t* saveLen)
 {
     //Get all linked saves
     int saveSlots_Length;
-    int saveSlots[16];
+    int saveSlots[PS1CARD_MAX_SLOTS];
     uint8_t* saveBytes;
 
     saveSlots_Length = findSaveLinks(slotNumber, saveSlots);
 
     //Calculate the number of bytes needed to store the save
-    *saveLen = 8320 + ((saveSlots_Length - 1) * 8192);
+    *saveLen = PS1CARD_HEADER_SIZE + (saveSlots_Length * PS1CARD_BLOCK_SIZE);
     saveBytes = malloc(*saveLen);
 
     //Copy save header
-    memcpy(saveBytes, ps1saves[saveSlots[0]].headerData, 128);
-//    for (int i = 0; i < 128; i++)
-//        saveBytes[i] = ps1saves[saveSlots[0]].headerData[i];
+    memcpy(saveBytes, ps1saves[saveSlots[0]].headerData, PS1CARD_HEADER_SIZE);
 
     //Copy save data
     for (int sNumber = 0; sNumber < saveSlots_Length; sNumber++)
-    {
-        memcpy(&saveBytes[128 + (sNumber * 8192)], ps1saves[saveSlots[sNumber]].saveData, 8192);
-//        for (int i = 0; i < 8192; i++)
-//            saveBytes[128 + (sNumber * 8192) + i] = ps1saves[saveSlots[sNumber]].saveData[i];
-    }
+        memcpy(&saveBytes[PS1CARD_HEADER_SIZE + (sNumber * PS1CARD_BLOCK_SIZE)], ps1saves[saveSlots[sNumber]].saveData, PS1CARD_BLOCK_SIZE);
 
     //Return save bytes
     return saveBytes;
@@ -877,9 +671,9 @@ int setSaveBytes(const uint8_t* saveBytes, int saveBytes_Length, int* reqSlots)
 {
     //Number of slots to set
     int freeSlots_Length;
-    int slotCount = (saveBytes_Length - 128) / 8192;
-    int freeSlots[16];
-    int numberOfBytes = slotCount * 8192;
+    int freeSlots[PS1CARD_MAX_SLOTS];
+    int slotCount = (saveBytes_Length - PS1CARD_HEADER_SIZE) / PS1CARD_BLOCK_SIZE;
+    int numberOfBytes = slotCount * PS1CARD_BLOCK_SIZE;
 
     *reqSlots = slotCount;
     freeSlots_Length = findFreeSlots(slotCount, freeSlots);
@@ -888,9 +682,7 @@ int setSaveBytes(const uint8_t* saveBytes, int saveBytes_Length, int* reqSlots)
     if (freeSlots_Length < slotCount) return false;
 
     //Place header data
-    memcpy(ps1saves[freeSlots[0]].headerData, saveBytes, 128);
-//    for (int i = 0; i < 128; i++)
-//        ps1saves[freeSlots[0]].headerData[i] = saveBytes[i];
+    memcpy(ps1saves[freeSlots[0]].headerData, saveBytes, PS1CARD_HEADER_SIZE);
 
     //Place save size in the header
     ps1saves[freeSlots[0]].headerData[4] = (uint8_t)(numberOfBytes & 0xFF);
@@ -899,12 +691,8 @@ int setSaveBytes(const uint8_t* saveBytes, int saveBytes_Length, int* reqSlots)
 
     //Place save data(cycle through each save)
     for (int i = 0; i < slotCount; i++)
-    {
         //Set all bytes
-        memcpy(ps1saves[freeSlots[i]].saveData, &saveBytes[128 + (i * 8192)], 8192);
-//        for (int byteCount = 0; byteCount < 8192; byteCount++)
-//            ps1saves[freeSlots[i]].saveData[byteCount] = saveBytes[128 + (i * 8192) + byteCount];
-    }
+        memcpy(ps1saves[freeSlots[i]].saveData, &saveBytes[PS1CARD_HEADER_SIZE + (i * PS1CARD_BLOCK_SIZE)], PS1CARD_BLOCK_SIZE);
 
     //Recreate header data
     //Set pointer to all slots except the last
@@ -930,8 +718,8 @@ int setSaveBytes(const uint8_t* saveBytes, int saveBytes_Length, int* reqSlots)
     loadRegion();
     loadSaveSize();
     loadPalette();
-    loadIcons();
     loadIconFrames();
+    loadIcons();
 
     //Set changedFlag to edited
     changedFlag = true;
@@ -942,26 +730,12 @@ int setSaveBytes(const uint8_t* saveBytes, int saveBytes_Length, int* reqSlots)
 //Set Product code, Identifier and Region in the header of the selected save
 static void setHeaderData(int slotNumber, const char* sProdCode, const char* sIdentifier, uint16_t sRegion)
 {
-    //Temp array used for manipulation
-    uint8_t* tempByteArray;
-
-    //Merge Product code and Identifier
-//    char headerString[256];
-//    int headerString_Length = strlen(headerString);
-    // = sProdCode + sIdentifier;
-
-    //Convert string from UTF-16 to currently used codepage
-//    tempByteArray = Encoding.Convert(Encoding.Unicode, Encoding.Default, Encoding.Unicode.GetBytes(headerString));
-
     //Clear existing data from header
     memset(&ps1saves[slotNumber].headerData[10], 0, 20);
-//    for (int byteCount = 0; byteCount < 20; byteCount++)
-//        ps1saves[slotNumber].headerData[byteCount + 10] = 0x00;
 
+    //Merge Product code and Identifier
     //Inject new data to header
     snprintf((char*) &ps1saves[slotNumber].headerData[12], 18, "%s%s", sProdCode, sIdentifier);
-//    for (int byteCount = 0; byteCount < headerString_Length; byteCount++)
-//        ps1saves[slotNumber].headerData[byteCount + 12] = tempByteArray[byteCount];
 
     //Add region to header
     ps1saves[slotNumber].headerData[10] = (uint8_t)(sRegion & 0xFF);
@@ -979,16 +753,15 @@ static void setHeaderData(int slotNumber, const char* sProdCode, const char* sId
 }
 
 //Get icon data as bytes
-uint8_t* getIconBytes(int slotNumber)
+uint8_t* getIconRGBA(int slotNumber, int frame)
 {
-    uint8_t* iconBytes = malloc(416);
+    uint32_t* iconBytes = malloc(16 * 16 * sizeof(uint32_t));
 
     //Copy bytes from the given slot
-    memcpy(iconBytes, &ps1saves[slotNumber].saveData[96], 416);
-//    for (int i = 0; i < 416; i++)
-//        iconBytes[i] = ps1saves[slotNumber].saveData[i + 96];
+    for (int i = 0; i < 256; i++)
+        iconBytes[i] = ps1saves[slotNumber].iconPalette[ps1saves[slotNumber].iconData[frame][i]];
 
-    return iconBytes;
+    return (uint8_t*) iconBytes;
 }
 
 //Set icon data to saveData
@@ -996,8 +769,6 @@ void setIconBytes(int slotNumber, uint8_t* iconBytes)
 {
     //Set bytes from the given slot
     memcpy(&ps1saves[slotNumber].saveData[96], iconBytes, 416);
-//    for (int i = 0; i < 416; i++)
-//        ps1saves[slotNumber].saveData[i + 96] = iconBytes[i];
 
     //Reload data
     loadPalette();
@@ -1007,31 +778,11 @@ void setIconBytes(int slotNumber, uint8_t* iconBytes)
     changedFlag = true;
 }
 
-//Load GME comments
-/*
-static void loadGMEComments(void)
-{
-    //Clear existing data
-    memset(saveComments, 0, sizeof(saveComments));
-
-    //Load comments from gmeHeader to saveComments
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
-    {
-        memcpy(saveComments[slotNumber], &gmeHeader[64 + (256*slotNumber)], 256);
-//        for (int byteCount = 0; byteCount < 256; byteCount++)
-//            tempByteArray[byteCount] = gmeHeader[byteCount+64 + (256*slotNumber)];
-
-        //Set save comment for each slot
-//        saveComments[slotNumber] = Encoding.Default.GetString(tempByteArray);
-    }
-}
-*/
-
 //Format a complete Memory Card
 void formatMemoryCard(void)
 {
     //Format each slot in Memory Card
-    for (int slotNumber = 0; slotNumber < 15; slotNumber++)
+    for (int slotNumber = 0; slotNumber < PS1CARD_MAX_SLOTS; slotNumber++)
         formatSlot(slotNumber);
 
     //Reload data
@@ -1041,8 +792,8 @@ void formatMemoryCard(void)
     loadRegion();
     loadSaveSize();
     loadPalette();
-    loadIcons();
     loadIconFrames();
+    loadIcons();
 
     //Set changedFlag to edited
     changedFlag = true;
@@ -1069,22 +820,21 @@ int saveSingleSave(const char* fileName, int slotNumber, int singleSaveType)
     {
         case PS1SAVE_AR:        //Action Replay single save
             setArHeader(fileName, ps1saves[slotNumber].saveName, binWriter);
-            fwrite(outputData + 128, 1, outputData_Length - 128, binWriter);
             break;
 
         case PS1SAVE_MCS:         //MCS single save
-            fwrite(outputData, 1, outputData_Length, binWriter);
+            fwrite(outputData, 1, PS1CARD_HEADER_SIZE, binWriter);
             break;
 
         case PS1SAVE_RAW:         //RAW single save
-            fwrite(outputData + 128, 1, outputData_Length - 128, binWriter);
             break;
 
         case PS1SAVE_PSV:         //PS3 unsigned save
-            setPsvHeader(ps1saves[slotNumber].saveName, outputData_Length - 0x80, binWriter);
-            fwrite(outputData + 128, 1, outputData_Length - 128, binWriter);
+            setPsvHeader(ps1saves[slotNumber].saveName, outputData_Length - PS1CARD_HEADER_SIZE, binWriter);
             break;
     }
+
+    fwrite(outputData + PS1CARD_HEADER_SIZE, 1, outputData_Length - PS1CARD_HEADER_SIZE, binWriter);
 
     //File is sucesfully saved, close the stream
     fclose(binWriter);
@@ -1124,21 +874,16 @@ int openSingleSave(const char* fileName, int* requiredSlots)
     // 'sc':          //Also valid as seen with MMX4 save
     else if (toupper(inputData[0]) == 'S' && toupper(inputData[1]) == 'C')
     {
-        finalData_Length = inputData_Length + 128;
+        finalData_Length = inputData_Length + PS1CARD_HEADER_SIZE;
         finalData = calloc(1, finalData_Length);
         char* singleSaveName = strrchr(fileName, '/') + 1; // Encoding.Default.GetBytes(Path.GetFileName(fileName));
 
         //Recreate save header
         finalData[0] = 0x51;        //Q
-
         strncpy((char*) &finalData[10], singleSaveName, 20);
-//        for (int i = 0; i < 20 && i < strlen(singleSaveName); i++)
-//            finalData[i + 10] = singleSaveName[i];
 
         //Copy save data
-        memcpy(&finalData[128], inputData, inputData_Length);
-//        for (int i = 0; i < inputData_Length; i++)
-//            finalData[i + 128] = inputData[i];
+        memcpy(&finalData[PS1CARD_HEADER_SIZE], inputData, inputData_Length);
     }
     // 'VSP':           //PSV single save (PS3 virtual save)
     else if (memcmp(inputData, "\0VSP", 4) == 0 && inputData[60] == 1)
@@ -1149,15 +894,10 @@ int openSingleSave(const char* fileName, int* requiredSlots)
 
         //Recreate save header
         finalData[0] = 0x51;        //Q
-
         memcpy(&finalData[10], &inputData[100], 20);
-//        for (int i = 0; i < 20; i++)
-//            finalData[i + 10] = inputData[i + 100];
 
         //Copy save data
-        memcpy(&finalData[128], &inputData[132], inputData_Length - 132);
-//        for (int i = 0; i < inputData_Length - 132; i++)
-//            finalData[i + 128] = inputData[i + 132];
+        memcpy(&finalData[PS1CARD_HEADER_SIZE], &inputData[132], inputData_Length - 132);
     }
     //Action Replay single save
     //Check if this is really an AR save (check for SC magic)
@@ -1168,15 +908,10 @@ int openSingleSave(const char* fileName, int* requiredSlots)
 
         //Recreate save header
         finalData[0] = 0x51;        //Q
-
         memcpy(&finalData[10], inputData, 20);
-//        for (int i = 0; i < 20; i++)
-//            finalData[i + 10] = inputData[i];
 
         //Copy save data
-        memcpy(&finalData[128], &inputData[54], inputData_Length - 54);
-//        for (int i = 0; i < inputData_Length - 54; i++)
-//            finalData[i + 128] = inputData[i + 54];
+        memcpy(&finalData[PS1CARD_HEADER_SIZE], &inputData[54], inputData_Length - 54);
     }
     else
     {
@@ -1220,25 +955,25 @@ int saveMemoryCard(const char* fileName, int memoryCardType, int fixData)
     {
         case PS1CARD_GME:         //GME Memory Card
             fillGmeHeader(binWriter);
-            fwrite(rawMemoryCard, 1, 131072, binWriter);
+            fwrite(rawMemoryCard, 1, PS1CARD_SIZE, binWriter);
             break;
 
         case PS1CARD_VGS:         //VGS Memory Card
             setVGSheader(binWriter);
-            fwrite(rawMemoryCard, 1, 131072, binWriter);
+            fwrite(rawMemoryCard, 1, PS1CARD_SIZE, binWriter);
             break;
 
         case PS1CARD_VMP:         //VMP Memory Card
             setVmpCardHeader(binWriter);
-            fwrite(rawMemoryCard, 1, 131072, binWriter);
+            fwrite(rawMemoryCard, 1, PS1CARD_SIZE, binWriter);
             break;
 
         case PS1CARD_MCX:         //MCX Memory Card
-//            fwrite(MakeMcxCard(rawMemoryCard));
+            MakeMcxCard(rawMemoryCard, binWriter);
             break;
 
         default:        //Raw Memory Card
-            fwrite(rawMemoryCard, 1, 131072, binWriter);
+            fwrite(rawMemoryCard, 1, PS1CARD_SIZE, binWriter);
             break;
     }
 
@@ -1268,9 +1003,9 @@ uint8_t* saveMemoryCardStream(int fixData)
 }
 
 //Get Memory Card data and free slots
-ps1McData_t* getMemoryCardData(void)
+ps1mcData_t* getMemoryCardData(void)
 {
-    if (0)
+    if (cardType == PS1CARD_NULL)
         return NULL;
 
     //Return Memory Card data
@@ -1286,17 +1021,14 @@ void openMemoryCardStream(const uint8_t* memCardData, int fixData)
     //Load Memory Card data from raw card
     loadDataFromRawCard();
 
-//    cardName = "Untitled";
-
     if(fixData) calculateXOR();
     loadStringData();
-//    loadGMEComments();
     loadSlotTypes();
     loadRegion();
     loadSaveSize();
     loadPalette();
-    loadIcons();
     loadIconFrames();
+    loadIcons();
 
     //Since the stream is of the unknown origin Memory Card is treated as edited
     changedFlag = true;
@@ -1324,7 +1056,7 @@ int openMemoryCard(const char* fileName, int fixData)
         }
 
         //Put data into temp array
-        if (fread(tempData, 1, 134976, binReader) < 131072)
+        if (fread(tempData, 1, 134976, binReader) < PS1CARD_SIZE)
         {
             fclose(binReader);
             return 0;
@@ -1371,14 +1103,13 @@ int openMemoryCard(const char* fileName, int fixData)
         //File type is not supported or is MCX
         else if (IsMcxCard(tempData))
         {
-//            tempData = DecryptMcxCard(tempData);
             startOffset = 128;
             cardType = PS1CARD_MCX;
         }
         else return 0;
 
         //Copy data to rawMemoryCard array with offset from input data
-        memcpy(rawMemoryCard, tempData + startOffset, 131072);
+        memcpy(rawMemoryCard, tempData + startOffset, PS1CARD_SIZE);
 
         //Load Memory Card data from raw card
         loadDataFromRawCard();
@@ -1386,7 +1117,6 @@ int openMemoryCard(const char* fileName, int fixData)
     // Memory Card should be created
     else
     {
-//        cardName = "Untitled";
         loadDataToRawCard(true);
         formatMemoryCard();
 
@@ -1400,9 +1130,6 @@ int openMemoryCard(const char* fileName, int fixData)
     //Convert various Memory Card data to strings
     loadStringData();
 
-    //Load GME comments (if card is any other type comments will be NULL)
-//    loadGMEComments();
-
     //Load slot descriptions (types)
     loadSlotTypes();
 
@@ -1415,11 +1142,11 @@ int openMemoryCard(const char* fileName, int fixData)
     //Load icon palette data as Color values
     loadPalette();
 
-    //Load icon data to bitmaps
-    loadIcons();
-
     //Load number of frames
     loadIconFrames();
+
+    //Load icon data to bitmaps
+    loadIcons();
 
     //Everything went well, no error messages
     return 1;

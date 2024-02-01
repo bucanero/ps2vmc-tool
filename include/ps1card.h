@@ -2,7 +2,8 @@
 
 #define PS1CARD_MAX_SLOTS       15
 #define PS1CARD_HEADER_SIZE     128
-#define PS1CARD_SAVE_SIZE       8192
+#define PS1CARD_BLOCK_SIZE      8192
+#define PS1CARD_SIZE            131072
 
 enum ps1card_type
 {
@@ -23,6 +24,18 @@ enum ps1save_type
     PS1SAVE_PSV,
 };
 
+enum ps1block_type
+{
+    PS1BLOCK_FORMATTED,
+    PS1BLOCK_INITIAL,
+    PS1BLOCK_MIDDLELINK,
+    PS1BLOCK_ENDLINK,
+    PS1BLOCK_DELETED_INITIAL,
+    PS1BLOCK_DELETED_MIDDLELINK,
+    PS1BLOCK_DELETED_ENDLINK,
+    PS1BLOCK_CORRUPTED,
+};
+
 typedef struct ps1McData
 {
     uint8_t* headerData;                //Memory Card header data (128 bytes each)
@@ -37,7 +50,7 @@ typedef struct ps1McData
     int saveSize;                       //Size of the save in Bytes
     char saveName[21];                  //Name of the save
     char saveTitle[65];                 //Title of the save data (in Shift-JIS format)
-} ps1McData_t;
+} ps1mcData_t;
 
 //Open Memory Card from the given filename (return error message if operation is not sucessful)
 int openMemoryCard(const char* fileName, int fixData);
@@ -61,7 +74,7 @@ int openSingleSave(const char* fileName, int* requiredSlots);
 int saveSingleSave(const char* fileName, int slotNumber, int singleSaveType);
 
 //Get icon data as bytes
-uint8_t* getIconBytes(int slotNumber);
+uint8_t* getIconRGBA(int slotNumber, int frame);
 
 //Set icon data to saveData
 void setIconBytes(int slotNumber, uint8_t* iconBytes);
@@ -76,4 +89,4 @@ void toggleDeleteSave(int slotNumber);
 void formatSave(int slotNumber);
 
 //Get Memory Card data
-ps1McData_t* getMemoryCardData(void);
+ps1mcData_t* getMemoryCardData(void);
