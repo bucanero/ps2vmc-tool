@@ -223,20 +223,13 @@ static void setPsvHeader(const char* saveFilename, uint32_t saveLength, FILE* fp
     return;
 }
 
-static void setArHeader(const char* fileName, const char* saveName, FILE* fp)
+static void setArHeader(const char* saveName, FILE* fp)
 {
     uint8_t arHeader[54];
-    char* arName = strrchr(fileName, '/') + 1;
-    int arName_Length = strlen(arName);
 
     //Copy header data to arHeader
     memset(arHeader, 0, sizeof(arHeader));
-    memcpy(arHeader, saveName, 20);
-//            for (int byteCount = 0; byteCount < 22; byteCount++)
-//                arHeader[byteCount] = ps1saves[slotNumber].headerData[byteCount + 10];
-
-    //Copy save name to arHeader
-    memcpy(&arHeader[21], arName, arName_Length);
+    strncpy((char*) arHeader, saveName, 20);
 
     fwrite(arHeader, 1, sizeof(arHeader), fp);
     return;
@@ -300,9 +293,9 @@ static void loadPalette(void)
             
             //Get the color value
             if ((redChannel | greenChannel | blueChannel | blackFlag) == 0)
-                ps1saves[slotNumber].iconPalette[colorCounter] = 0x000000FF; //Color.Transparent;
+                ps1saves[slotNumber].iconPalette[colorCounter] = 0x00000000;
             else
-                ps1saves[slotNumber].iconPalette[colorCounter] = (redChannel << 24) | (greenChannel << 16) | (blueChannel << 8) | 0xFF; //Color.FromArgb(redChannel, greenChannel, blueChannel);
+                ps1saves[slotNumber].iconPalette[colorCounter] = redChannel | (greenChannel << 8) | (blueChannel << 16) | 0xFF000000;
 
             colorCounter++;
         }
@@ -755,7 +748,12 @@ static void setHeaderData(int slotNumber, const char* sProdCode, const char* sId
 //Get icon data as bytes
 uint8_t* getIconRGBA(int slotNumber, int frame)
 {
-    uint32_t* iconBytes = malloc(16 * 16 * sizeof(uint32_t));
+    uint32_t* iconBytes;
+
+    if (frame >= ps1saves[slotNumber].iconFrames)
+        return NULL;
+
+    iconBytes = malloc(16 * 16 * sizeof(uint32_t));
 
     //Copy bytes from the given slot
     for (int i = 0; i < 256; i++)
@@ -819,7 +817,7 @@ int saveSingleSave(const char* fileName, int slotNumber, int singleSaveType)
     switch (singleSaveType)
     {
         case PS1SAVE_AR:        //Action Replay single save
-            setArHeader(fileName, ps1saves[slotNumber].saveName, binWriter);
+            setArHeader(ps1saves[slotNumber].saveName, binWriter);
             break;
 
         case PS1SAVE_MCS:         //MCS single save
@@ -876,7 +874,9 @@ int openSingleSave(const char* fileName, int* requiredSlots)
     {
         finalData_Length = inputData_Length + PS1CARD_HEADER_SIZE;
         finalData = calloc(1, finalData_Length);
-        char* singleSaveName = strrchr(fileName, '/') + 1; // Encoding.Default.GetBytes(Path.GetFileName(fileName));
+
+        const char* singleSaveName = strrchr(fileName, '/');
+        singleSaveName = singleSaveName ? singleSaveName + 1 : fileName;
 
         //Recreate save header
         finalData[0] = 0x51;        //Q

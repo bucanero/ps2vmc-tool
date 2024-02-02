@@ -26,6 +26,7 @@
 
 #include "ps1card.h"
 #include "util.h"
+#include "svpng.h"
 
 #define PROGRAM_NAME    "PS1VMC-TOOL"
 #define PROGRAM_VER     "1.0.0"
@@ -46,6 +47,7 @@ enum ps1vmc_cmd {
 	CMD_MCS_EXPORT,
 	CMD_RAW_EXPORT,
 	CMD_PSV_EXPORT,
+	CMD_ICONS,
 	CMD_MCFORMAT,
 	CMD_INJECT,
 	CMD_REMOVE,
@@ -55,7 +57,7 @@ enum ps1vmc_cmd {
 static void print_usage(int argc, char **argv)
 {
 	(void)argc;
-	printf("Copyright (C) 2023 - by Bucanero\n");
+	printf("Copyright (C) 2024 - by Bucanero\n");
 	printf("based on MemcardRex by ShendoXT\n\n");
 	printf("Usage:\n");
 	printf("%s <VMC filepath> <command> [<arguments>]\n", argv[0]);
@@ -63,19 +65,48 @@ static void print_usage(int argc, char **argv)
 	printf("Available commands:\n");
 	printf("\t --mc-info, -i\n");
 	printf("\t --mc-free, -f\n");
+	printf("\t --mc-format\n");
+	printf("\t --list, -ls\n");
+	printf("\t --remove, -rm <slot #>\n");
+	printf("\t --icons <slot #>\n");
 	printf("\t --raw-image, -raw <output filepath>\n");
 	printf("\t --gme-image, -gme <output filepath>\n");
 	printf("\t --vgs-image, -vgs <output filepath>\n");
 	printf("\t --vmp-image, -vmp <output filepath>\n");
-	printf("\t --mc-format\n");
-	printf("\t --list, -ls\n");
 	printf("\t --inject-save, -in <.MCS/.PSV/.PSX/.RAW/.PS1 input filepath>\n");
-	printf("\t --remove, -rm <slot #>\n");
 	printf("\t --extract-save, -x <slot #> <RAW output filepath>\n");
 	printf("\t --arx-export, -arx <slot #> <ActionReplay output filepath>\n");
 	printf("\t --mcs-export, -mcs <slot #> <MCS output filepath>\n");
 	printf("\t --psv-export, -psv <slot #>\n");
 	printf("\n");
+}
+
+static int cmd_icons(const char* slot)
+{
+	uint8_t *icon;
+	char filename[256];
+	int id = strtol(slot, NULL, 10);
+	ps1mcData_t *mcdata = getMemoryCardData();
+
+	if (!mcdata)
+		return -1;
+
+	for (int i = 0; i < 3; i++)
+	{
+		icon = getIconRGBA(id, i);
+		if (!icon)
+			continue;
+
+		snprintf(filename, sizeof(filename), "%s_icon%d.png", mcdata[id].saveProdCode, i);
+		printf("Exporting '%s' icon %d: %s ...\n", mcdata[id].saveName, i, filename);
+
+		FILE* fp = fopen(filename, "wb");
+		svpng(fp, 16, 16, icon, 1);
+		fclose(fp);
+		free(icon);
+	}
+
+	return 0;
 }
 
 static int cmd_mcinfo(void)
@@ -323,6 +354,14 @@ int main(int argc, char **argv)
 			cmd = CMD_REMOVE;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--icons")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_ICONS;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--arx-export") || !strcmp(argv[2], "-arx")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
@@ -379,7 +418,7 @@ int main(int argc, char **argv)
 		else if (cmd == CMD_PSV_EXPORT) {
 			r = cmd_psv_export(cmd_args[0]);
 			if (r < 0)
-				printf("Error: can't export save to PSU... (%d)\n", r);
+				printf("Error: can't export save to PSV... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();
@@ -402,6 +441,13 @@ int main(int argc, char **argv)
 			else if (r != 0)
 				printf("Error: can't inject file '%s'... (%d)\n", cmd_args[0], r);
 		}
+		else if (cmd == CMD_ICONS) {
+			r = cmd_icons(cmd_args[0]);
+			if (r == 99999)
+				printf("Error: memory card is not formatted!\n");
+			else if (r < 0)
+				printf("Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
+		}
 		else if (cmd == CMD_REMOVE) {
 			r = cmd_remove(cmd_args[0]);
 			if (r == 99999)
@@ -419,7 +465,7 @@ int main(int argc, char **argv)
 	}
 
 	/* save changes */
-	if (cmd > CMD_PSV_EXPORT && r == 0) {
+	if (cmd > CMD_ICONS && r == 0) {
 		saveMemoryCard(argv[1], PS1CARD_NULL, 0);
 		printf("VMC file saved: %s\n", argv[1]);
 	}

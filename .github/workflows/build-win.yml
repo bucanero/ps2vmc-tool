@@ -45,7 +45,7 @@ jobs:
     
       - name: Compress output
         run: |
-          tar -zcvf build.tar.gz ps2vmc-tool.exe
+          tar -zcvf build.tar.gz ps2vmc-tool.exe ps1vmc-tool.exe
 
       - uses: actions/upload-artifact@v3
         with:
