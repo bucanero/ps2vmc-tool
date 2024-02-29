@@ -205,7 +205,7 @@ static int cmd_ecc_img(const char *output)
 
 static int cmd_export(const char* path, const char* output)
 {
-	int r, fd, dd;
+	int r, fd, dd, foundfile;
 	struct io_dirent dirent;
 	struct MCFsEntry entry;
 	char filepath[256];
@@ -244,6 +244,7 @@ static int cmd_export(const char* path, const char* output)
 
 	do {
 		r = mcio_mcDread(dd, &dirent);
+		foundfile = r;
 		if (r && (strcmp(dirent.name, ".")) && (strcmp(dirent.name, ".."))) {
 			snprintf(filepath, sizeof(filepath), "%s/%s", path, dirent.name);
 			printf("Adding %-48s | %8d bytes\n", filepath, dirent.stat.size);
@@ -283,11 +284,11 @@ static int cmd_export(const char* path, const char* output)
 			}
 			free(p);
 
-			entry.length = 1024 - (dirent.stat.size % 1024);
+			entry.length = (1024 - (dirent.stat.size % 1024)) % 1024;
 			while(entry.length--)
 				fputc(0xFF, fh);
 		}
-	} while (r);
+	} while (foundfile);
 
 	mcio_mcDclose(dd);
 	fclose(fh);
