@@ -1,11 +1,11 @@
 # PS2VMC Tool
 
-This project aim to create a PC command line tool to manage their PS2 virtual memory cards directly from the PC.
+PS2VMC Tool is a command-line application for managing PS2 virtual memory cards directly from the PC.
 
 ## Usage
 
 ```
-PS2VMC-TOOL v1.1.0
+PS2VMC-TOOL v1.1.2
 Copyright (C) 2023 - by Bucanero
 based on ps3mca-tool by jimmikaelkael et al.
 
@@ -26,7 +26,42 @@ Available commands:
 	 --remove, -rm <mc filepath>
 	 --file-crosslink, -cl <real mc filepath> <dummy mc filepath>
 	 --psv-import, -pi <PSV filepath>
+	 --psu-import, -pu <PSU filepath>
 	 --psu-export, -px <mc path> <output filepath>
+```
+
+---
+
+# PS1VMC Tool
+
+PS1VMC Tool is a command-line application for managing PS1 virtual memory cards directly from the PC.
+
+## Usage
+
+```
+PS1VMC-TOOL v1.0.0
+Copyright (C) 2024 - by Bucanero
+based on MemcardRex by ShendoXT
+
+Usage:
+./ps1vmc-tool <VMC filepath> <command> [<arguments>]
+
+Available commands:
+	 --mc-info, -i
+	 --mc-free, -f
+	 --mc-format
+	 --list, -ls
+	 --remove, -rm <slot #>
+	 --icons <slot #>
+	 --raw-image, -raw <output filepath>
+	 --gme-image, -gme <output filepath>
+	 --vgs-image, -vgs <output filepath>
+	 --vmp-image, -vmp <output filepath>
+	 --inject-save, -in <.MCS/.PSV/.PSX/.RAW/.PS1 input filepath>
+	 --extract-save, -x <slot #> <RAW output filepath>
+	 --arx-export, -arx <slot #> <ActionReplay output filepath>
+	 --mcs-export, -mcs <slot #> <MCS output filepath>
+	 --psv-export, -psv <slot #>
 ```
 
 ## Building the source code
@@ -37,7 +72,8 @@ make
 
 ## Credits
 
-Based on ps3mca-tool by [jimmikaelkael](https://github.com/jimmikaelkael)
+- PS1VMC Tool - Based on [MemcardRex](https://github.com/ShendoXT/memcardrex) by [ShendoXT](https://github.com/ShendoXT)
+- PS2VMC Tool - Based on ps3mca-tool by [jimmikaelkael](https://github.com/jimmikaelkael)
 
 ```
  * ps3mca-tool - PlayStation 3 Memory Card Adaptor Software
