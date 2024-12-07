@@ -1,6 +1,6 @@
 TOOLS	=	src/main
 PS1TOOLS=	src/ps1main
-COMMON	=	src/util.o src/mcio.o src/ps1card.o src/aes.o
+COMMON	=	src/util.o src/mcio.o src/ps1card.o src/aes.o src/ps2icon.o
 DEPS	=	Makefile
 
 CC	=	gcc

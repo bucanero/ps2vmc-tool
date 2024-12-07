@@ -28,9 +28,11 @@
 
 #include "mcio.h"
 #include "util.h"
+#include "ps2icon.h"
+#include "svpng.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
-#define PROGRAM_VER     "1.1.2"
+#define PROGRAM_VER     "1.2.0"
 
 #define PSV_MAGIC       0x50535600
 
@@ -42,6 +44,7 @@ enum ps2vmc_cmd {
 	CMD_ECC_IMG,
 	CMD_LIST,
 	CMD_PSU_EXPORT,
+	CMD_ICONS_PNG,
 	CMD_EXTRACT,
 	CMD_MCFORMAT,
 	CMD_INJECT,
@@ -69,6 +72,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --ecc-image, -ecc <output filepath>\n");
 	printf("\t --mc-format\n");
 	printf("\t --list, -ls <mc path>\n");
+	printf("\t --icons-png <mc path>\n");
 	printf("\t --extract-file, -x <mc filepath> <output filepath>\n");
 	printf("\t --inject-file, -in <input filepath> <mc filepath>\n");
 	printf("\t --make-directory, -mkdir <mc path>\n");
@@ -296,6 +300,60 @@ static int cmd_export(const char* path, const char* output)
 	printf("Save succesfully exported to %s.\n", output);
 
 	return dd;
+}
+
+static int cmd_export_icons_png(const char* path)
+{
+	int r, fd;
+	ps2_IconSys_t iconsys;
+	char filePath[256];
+	uint8_t* output;
+	char* fnames[4] = { iconsys.IconName, iconsys.copyIconName, iconsys.deleteIconName, NULL };
+
+	if (path[0] == '/') path++;
+	printf("Exporting '%s' icons...\n", path);
+
+	snprintf(filePath, sizeof(filePath), "%s/icon.sys", path);
+	fd = mcio_mcOpen(filePath, sceMcFileAttrReadable | sceMcFileAttrFile);
+	if (fd < 0)
+		return fd;
+
+	r = mcio_mcRead(fd, &iconsys, sizeof(ps2_IconSys_t));
+	if (r != (int)sizeof(ps2_IconSys_t)) {
+		mcio_mcClose(fd);
+		return -1001;
+	}
+	mcio_mcClose(fd);
+
+	printf("- List icon  : %s\n", fnames[0]);
+	printf("- Copy icon  : %s\n", fnames[1]);
+	printf("- Delete icon: %s\n", fnames[2]);
+
+	for (int i = 0; i < 3; i++) {
+		output = getIconPS2(path, fnames[i]);
+		if (!output) {
+			return -1002;
+		}
+
+		fnames[3] = strrchr(fnames[i], '.');
+		if (fnames[3]) {
+			*fnames[3] = 0;
+		}
+
+		snprintf(filePath, sizeof(filePath), "%.12s_%s.png", path, fnames[i]);
+
+		FILE *fh = fopen(filePath, "wb");
+		if (fh == NULL) {
+			return -1003;
+		}
+
+		svpng(fh, 128, 128, output, 1);
+		fclose(fh);
+
+		printf("Icon succesfully exported to %s\n", filePath);
+	}
+
+	return 0;
 }
 
 static int cmd_mcformat(void)
@@ -702,6 +760,14 @@ int main(int argc, char **argv)
 			cmd = CMD_LIST;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--icons-png")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_ICONS_PNG;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--extract-file") || !strcmp(argv[2], "-x")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
@@ -813,6 +879,11 @@ int main(int argc, char **argv)
 			r = cmd_ecc_img(cmd_args[0]);
 			if (r < 0)
 				printf("Error: can't create image file... (%d)\n", r);
+		}
+		else if (cmd == CMD_ICONS_PNG) {
+			r = cmd_export_icons_png(cmd_args[0]);
+			if (r < 0)
+				printf("Error: can't export icons... (%d)\n", r);
 		}
 		else if (cmd == CMD_PSU_EXPORT) {
 			r = cmd_export(cmd_args[0], cmd_args[1]);
