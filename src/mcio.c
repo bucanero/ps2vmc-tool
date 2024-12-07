@@ -25,6 +25,7 @@
 
 #include <stdio.h>
 #include <time.h>
+#include <string.h>
 
 /* Card Flags */
 #define CF_USE_ECC			0x01
@@ -2281,7 +2282,7 @@ lbl1:
 			if (i >= clusters_per_card)
 				return sceMcResNoFormat;
 
-			do {	
+			do {
 				r = Card_WriteCluster(i, 1);
 				if (r == 1)
 					break;
