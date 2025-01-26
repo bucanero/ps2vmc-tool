@@ -561,7 +561,7 @@ static int cmd_import(const char *input)
 
 	r = mcio_mcMkDir(ps2md->filename);
 	if (r < 0)
-		printf("Error: can't create directory '%s'... (%d)\n", ps2md->filename, r);
+		fprintf(stderr, "Error: can't create directory '%s'... (%d)\n", ps2md->filename, r);
 	else
 		mcio_mcClose(r);
 
@@ -639,7 +639,7 @@ static int cmd_psu_import(const char *input)
 
 	r = mcio_mcMkDir(psu_entry.name);
 	if (r < 0)
-		printf("Error: can't create directory '%s'... (%d)\n", psu_entry.name, r);
+		fprintf(stderr, "Error: can't create directory '%s'... (%d)\n", psu_entry.name, r);
 	else
 		mcio_mcClose(r);
 
@@ -847,120 +847,120 @@ int main(int argc, char **argv)
 	}
 
 	if (read_buffer(argv[1], &data, &dsize) < 0) {
-		printf("Error: failed to open VMC file... (%s)\n", argv[1]);
+		fprintf(stderr, "Error: failed to open VMC file... (%s)\n", argv[1]);
 		return 1;
 	}
 
 	r = mcio_init(data, dsize);
 	/*if (r == sceMcResNoFormat)
-		printf("Error: memory card not formated...\n");*/
+		fprintf(stderr, "Error: memory card not formated...\n");*/
 	if ((r != sceMcResNoFormat) && (r < 0)) {
-		printf("Error: no PS2 Memory Card detected... (%d)\n", r);
+		fprintf(stderr, "Error: no PS2 Memory Card detected... (%d)\n", r);
 	}
 	else {
 		if (cmd == CMD_MCINFO) {
 			r = cmd_mcinfo();
 			if (r < 0)
-				printf("Error: can't get MC infos... (%d)\n", r);
+				fprintf(stderr, "Error: can't get MC infos... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFREE) {
 			r = cmd_mcfree();
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't get MC free space... (%d)\n", r);
+				fprintf(stderr, "Error: can't get MC free space... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCIMG) {
 			r = cmd_mcimg(cmd_args[0]);
 			if (r < 0)
-				printf("Error: can't create image file... (%d)\n", r);
+				fprintf(stderr, "Error: can't create image file... (%d)\n", r);
 		}
 		else if (cmd == CMD_ECC_IMG) {
 			r = cmd_ecc_img(cmd_args[0]);
 			if (r < 0)
-				printf("Error: can't create image file... (%d)\n", r);
+				fprintf(stderr, "Error: can't create image file... (%d)\n", r);
 		}
 		else if (cmd == CMD_ICONS_PNG) {
 			r = cmd_export_icons_png(cmd_args[0]);
 			if (r < 0)
-				printf("Error: can't export icons... (%d)\n", r);
+				fprintf(stderr, "Error: can't export icons... (%d)\n", r);
 		}
 		else if (cmd == CMD_PSU_EXPORT) {
 			r = cmd_export(cmd_args[0], cmd_args[1]);
 			if (r < 0)
-				printf("Error: can't export save to PSU... (%d)\n", r);
+				fprintf(stderr, "Error: can't export save to PSU... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();
 			if (r < 0)
-				printf("Error: can't format MC... (%d)\n", r);
+				fprintf(stderr, "Error: can't format MC... (%d)\n", r);
 		}
 		else if (cmd == CMD_LIST) {
 			r = cmd_list(cmd_args[0]);
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r == sceMcResNoEntry)
-				printf("Error: path '%s' not found...\n", cmd_args[0]);
+				fprintf(stderr, "Error: path '%s' not found...\n", cmd_args[0]);
 			else if (r == sceMcResNotDir)
-				printf("Error: path '%s' is not a directory...\n", cmd_args[0]);
+				fprintf(stderr, "Error: path '%s' is not a directory...\n", cmd_args[0]);
 			else if (r < 0)
-				printf("Error: can't list directory '%s' (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't list directory '%s' (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_EXTRACT) {
 			r = cmd_extract(cmd_args[0], cmd_args[1]);
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r == sceMcResNotFile)
-				printf("Error: '%s' is not a file...\n", cmd_args[0]);
+				fprintf(stderr, "Error: '%s' is not a file...\n", cmd_args[0]);
 			else if (r < 0)
-				printf("Error: can't extract file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't extract file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_INJECT) {
 			r = cmd_inject(cmd_args[0], cmd_args[1]);
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't inject file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't inject file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_MKDIR) {
 			r = cmd_mkdir(cmd_args[0]);
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't create directory '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't create directory '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_RMDIR) {
 			r = cmd_rmdir(cmd_args[0]);
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't remove directory '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't remove directory '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_REMOVE) {
 			r = cmd_remove(cmd_args[0]);
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_CROSSLINK) {
 			r = cmd_crosslink(cmd_args[0], cmd_args[1]);
 			if (r < 0)
-				printf("Error: can't crosslink file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't crosslink file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_PSU_IMPORT) {
 			r = cmd_psu_import(cmd_args[0]);
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_PSV_IMPORT) {
 			r = cmd_import(cmd_args[0]);
 			if (r == sceMcResNoFormat)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
 		}
 	}
 

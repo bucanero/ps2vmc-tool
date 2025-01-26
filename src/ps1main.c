@@ -395,72 +395,72 @@ int main(int argc, char **argv)
 	r = openMemoryCard(argv[1], 0);
 
 	if (!r) {
-		printf("Error: no PS1 Memory Card detected... (%s)\n", argv[1]);
+		fprintf(stderr, "Error: no PS1 Memory Card detected... (%s)\n", argv[1]);
 	}
 	else {
 		if (cmd == CMD_MCINFO) {
 			r = cmd_mcinfo();
 			if (r < 0)
-				printf("Error: can't get MC infos... (%d)\n", r);
+				fprintf(stderr, "Error: can't get MC infos... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFREE) {
 			r = cmd_mcfree();
 			if (r == 99999)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't get MC free space... (%d)\n", r);
+				fprintf(stderr, "Error: can't get MC free space... (%d)\n", r);
 		}
 		else if (cmd == CMD_RAW_IMG || cmd == CMD_GME_IMG || cmd == CMD_VGS_IMG || cmd == CMD_VMP_IMG) {
 			r = cmd_mcimg(cmd_args[0], cmd - 2);
 			if (r < 0)
-				printf("Error: can't create image file... (%d)\n", r);
+				fprintf(stderr, "Error: can't create image file... (%d)\n", r);
 		}
 		else if (cmd == CMD_PSV_EXPORT) {
 			r = cmd_psv_export(cmd_args[0]);
 			if (r < 0)
-				printf("Error: can't export save to PSV... (%d)\n", r);
+				fprintf(stderr, "Error: can't export save to PSV... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();
 			if (r < 0)
-				printf("Error: can't format MC... (%d)\n", r);
+				fprintf(stderr, "Error: can't format MC... (%d)\n", r);
 		}
 		else if (cmd == CMD_LIST) {
 			r = cmd_list();
 			if (r == 99999)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r == 99999)
-				printf("Error: path '%s' not found...\n", cmd_args[0]);
+				fprintf(stderr, "Error: path '%s' not found...\n", cmd_args[0]);
 			else if (r < 0)
-				printf("Error: can't list directory '%s' (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't list directory '%s' (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_INJECT) {
 			r = cmd_inject(cmd_args[0]);
 			if (r == 99999)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r != 0)
-				printf("Error: can't inject file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't inject file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_ICONS) {
 			r = cmd_icons(cmd_args[0]);
 			if (r == 99999)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_REMOVE) {
 			r = cmd_remove(cmd_args[0]);
 			if (r == 99999)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_AR_EXPORT || cmd == CMD_MCS_EXPORT || cmd == CMD_RAW_EXPORT) {
 			r = cmd_export(cmd_args[0], cmd_args[1], cmd - 8);
 			if (r == 99999)
-				printf("Error: memory card is not formatted!\n");
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				printf("Error: can't export file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't export file '%s'... (%d)\n", cmd_args[0], r);
 		}
 	}
 
