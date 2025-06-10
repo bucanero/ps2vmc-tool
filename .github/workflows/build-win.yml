@@ -47,7 +47,7 @@ jobs:
         run: |
           tar -zcvf build.tar.gz ps2vmc-tool.exe ps1vmc-tool.exe
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: build-${{ env.sha_name }}-${{matrix.mingw}}
           path: build.tar.gz
