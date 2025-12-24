@@ -349,6 +349,7 @@ static int cmd_export_icons_png(const char* path)
 
 		svpng(fh, 128, 128, output, 1);
 		fclose(fh);
+		free(output);
 
 		printf("Icon succesfully exported to %s\n", filePath);
 	}
