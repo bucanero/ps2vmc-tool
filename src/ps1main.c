@@ -29,7 +29,7 @@
 #include "svpng.h"
 
 #define PROGRAM_NAME    "PS1VMC-TOOL"
-#define PROGRAM_VER     "1.0.0"
+#define PROGRAM_VER     "1.1.0"
 
 #define PSV_MAGIC       0x50535600
 
@@ -73,6 +73,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --gme-image, -gme <output filepath>\n");
 	printf("\t --vgs-image, -vgs <output filepath>\n");
 	printf("\t --vmp-image, -vmp <output filepath>\n");
+	printf("\t --mcx-image, -mcx <output filepath>\n");
 	printf("\t --inject-save, -in <.MCS/.PSV/.PSX/.RAW/.PS1 input filepath>\n");
 	printf("\t --extract-save, -x <slot #> <RAW output filepath>\n");
 	printf("\t --arx-export, -arx <slot #> <ActionReplay output filepath>\n");
@@ -327,10 +328,18 @@ int main(int argc, char **argv)
 			cmd = CMD_VMP_IMG;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--mcx-image") || !strcmp(argv[2], "-mcx")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_MCX_IMG;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--mc-format")) {
 			cmd = CMD_MCFORMAT;
 		}
-		else if (!strcmp(argv[2], "--extract-file") || !strcmp(argv[2], "-x")) {
+		else if (!strcmp(argv[2], "--extract-save") || !strcmp(argv[2], "-x")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
 				return 1;
@@ -338,7 +347,7 @@ int main(int argc, char **argv)
 			cmd = CMD_RAW_EXPORT;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--inject-file") || !strcmp(argv[2], "-in")) {
+		else if (!strcmp(argv[2], "--inject-save") || !strcmp(argv[2], "-in")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
 				return 1;
@@ -410,7 +419,8 @@ int main(int argc, char **argv)
 			else if (r < 0)
 				fprintf(stderr, "Error: can't get MC free space... (%d)\n", r);
 		}
-		else if (cmd == CMD_RAW_IMG || cmd == CMD_GME_IMG || cmd == CMD_VGS_IMG || cmd == CMD_VMP_IMG) {
+		else if (cmd == CMD_RAW_IMG || cmd == CMD_GME_IMG || cmd == CMD_VGS_IMG ||
+			 cmd == CMD_VMP_IMG || cmd == CMD_MCX_IMG) {
 			r = cmd_mcimg(cmd_args[0], cmd - 2);
 			if (r < 0)
 				fprintf(stderr, "Error: can't create image file... (%d)\n", r);

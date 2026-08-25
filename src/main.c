@@ -29,10 +29,11 @@
 #include "mcio.h"
 #include "util.h"
 #include "ps2icon.h"
+#include "psv_resign.h"
 #include "svpng.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
-#define PROGRAM_VER     "1.2.0"
+#define PROGRAM_VER     "1.3.0"
 
 #define PSV_MAGIC       0x50535600
 
@@ -44,6 +45,7 @@ enum ps2vmc_cmd {
 	CMD_ECC_IMG,
 	CMD_LIST,
 	CMD_PSU_EXPORT,
+	CMD_PSV_EXPORT,
 	CMD_ICONS_PNG,
 	CMD_EXTRACT,
 	CMD_MCFORMAT,
@@ -82,6 +84,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --psv-import, -pi <PSV filepath>\n");
 	printf("\t --psu-import, -pu <PSU filepath>\n");
 	printf("\t --psu-export, -px <mc path> <output filepath>\n");
+	printf("\t --psv-export, -pv <mc path> <output filepath>\n");
 	printf("\n");
 }
 
@@ -300,6 +303,195 @@ static int cmd_export(const char* path, const char* output)
 	printf("Save succesfully exported to %s.\n", output);
 
 	return dd;
+}
+
+/*
+ * Export one save directory as a signed PS3 .PSV.
+ *
+ * Layout: psv_header_t, ps2_header_t, ps2_MainDirInfo_t, one ps2_FileInfo_t
+ * per file, then the file data packed end to end with no padding.
+ */
+static int cmd_psv_export(const char* path, const char* output)
+{
+	int r, fd, dd, i, numFiles = 0;
+	uint32_t dataPos, total = 0;
+	struct io_dirent dirent;
+	struct io_dirent *files = NULL;
+	ps2_IconSys_t iconsys;
+	psv_header_t psvh;
+	ps2_header_t ps2h;
+	ps2_MainDirInfo_t ps2md;
+	ps2_FileInfo_t *ps2fi = NULL;
+	char filepath[256];
+	FILE *fh;
+
+	printf("Exporting '%s' to %s...\n", path, output);
+
+	dd = mcio_mcDopen(path);
+	if (dd < 0)
+		return dd;
+
+	/* first pass: collect the files, with the stat() mode the PSV wants
+	 * (mcio_mcDread rebuilds mode from a subset of the flags) */
+	do {
+		r = mcio_mcDread(dd, &dirent);
+		if (r && strcmp(dirent.name, ".") && strcmp(dirent.name, "..")) {
+			struct io_dirent *tmp = realloc(files, (numFiles + 1) * sizeof(struct io_dirent));
+			if (!tmp) {
+				free(files);
+				mcio_mcDclose(dd);
+				return -1000;
+			}
+			files = tmp;
+
+			snprintf(filepath, sizeof(filepath), "%s/%s", path, dirent.name);
+			if (mcio_mcStat(filepath, &files[numFiles]) < 0)
+				files[numFiles] = dirent;
+
+			total += files[numFiles].stat.size;
+			numFiles++;
+		}
+	} while (r);
+
+	mcio_mcDclose(dd);
+
+	if (!numFiles) {
+		free(files);
+		fprintf(stderr, "Error: '%s' holds no files\n", path);
+		return -1001;
+	}
+
+	/* the directory entry itself */
+	if (mcio_mcStat(path, &dirent) < 0) {
+		free(files);
+		return -1002;
+	}
+
+	/* icon.sys names the three icons the PS3 shows */
+	memset(&iconsys, 0, sizeof(iconsys));
+	snprintf(filepath, sizeof(filepath), "%s/icon.sys", path);
+	fd = mcio_mcOpen(filepath, sceMcFileAttrReadable | sceMcFileAttrFile);
+	if (fd >= 0) {
+		mcio_mcRead(fd, &iconsys, sizeof(ps2_IconSys_t));
+		mcio_mcClose(fd);
+	}
+
+	ps2fi = calloc(numFiles, sizeof(ps2_FileInfo_t));
+	if (!ps2fi) {
+		free(files);
+		return -1000;
+	}
+
+	dataPos = sizeof(psv_header_t) + sizeof(ps2_header_t) +
+		  sizeof(ps2_MainDirInfo_t) + sizeof(ps2_FileInfo_t) * numFiles;
+
+	memset(&psvh, 0, sizeof(psvh));
+	memcpy(psvh.magic, "\0VSP", 4);
+	memcpy(psvh.salt, "www.bucanero.com.ar", 20);
+	append_le_uint32((uint8_t*) &psvh.headerSize, 0x2C);
+	append_le_uint32((uint8_t*) &psvh.saveType, 2);
+
+	memset(&ps2h, 0, sizeof(ps2h));
+	append_le_uint32((uint8_t*) &ps2h.numberOfFiles, numFiles);
+	append_le_uint32((uint8_t*) &ps2h.displaySize, total);
+
+	memset(&ps2md, 0, sizeof(ps2md));
+	memcpy(&ps2md.create, &dirent.stat.ctime, sizeof(struct sceMcStDateTime));
+	memcpy(&ps2md.modified, &dirent.stat.mtime, sizeof(struct sceMcStDateTime));
+	memcpy(ps2md.filename, dirent.name, sizeof(ps2md.filename));
+	append_le_uint32((uint8_t*) &ps2md.numberOfFilesInDir, dirent.stat.size);
+	append_le_uint32((uint8_t*) &ps2md.attribute, dirent.stat.mode);
+
+	/* second pass: file entries, and where each one lands */
+	for (i = 0; i < numFiles; i++) {
+		memcpy(&ps2fi[i].create, &files[i].stat.ctime, sizeof(struct sceMcStDateTime));
+		memcpy(&ps2fi[i].modified, &files[i].stat.mtime, sizeof(struct sceMcStDateTime));
+		memcpy(ps2fi[i].filename, files[i].name, sizeof(ps2fi[i].filename));
+		append_le_uint32((uint8_t*) &ps2fi[i].filesize, files[i].stat.size);
+		append_le_uint32((uint8_t*) &ps2fi[i].attribute, files[i].stat.mode);
+		append_le_uint32((uint8_t*) &ps2fi[i].positionInFile, dataPos);
+
+		if (strcmp(files[i].name, "icon.sys") == 0) {
+			append_le_uint32((uint8_t*) &ps2h.sysPos, dataPos);
+			append_le_uint32((uint8_t*) &ps2h.sysSize, files[i].stat.size);
+		}
+		if (strcmp(files[i].name, iconsys.IconName) == 0) {
+			append_le_uint32((uint8_t*) &ps2h.icon1Pos, dataPos);
+			append_le_uint32((uint8_t*) &ps2h.icon1Size, files[i].stat.size);
+		}
+		if (strcmp(files[i].name, iconsys.copyIconName) == 0) {
+			append_le_uint32((uint8_t*) &ps2h.icon2Pos, dataPos);
+			append_le_uint32((uint8_t*) &ps2h.icon2Size, files[i].stat.size);
+		}
+		if (strcmp(files[i].name, iconsys.deleteIconName) == 0) {
+			append_le_uint32((uint8_t*) &ps2h.icon3Pos, dataPos);
+			append_le_uint32((uint8_t*) &ps2h.icon3Size, files[i].stat.size);
+		}
+
+		dataPos += files[i].stat.size;
+	}
+
+	fh = fopen(output, "wb");
+	if (!fh) {
+		free(ps2fi);
+		free(files);
+		return -1003;
+	}
+
+	fwrite(&psvh, sizeof(psvh), 1, fh);
+	fwrite(&ps2h, sizeof(ps2h), 1, fh);
+	fwrite(&ps2md, sizeof(ps2md), 1, fh);
+	fwrite(ps2fi, sizeof(ps2_FileInfo_t), numFiles, fh);
+
+	for (i = 0; i < numFiles; i++) {
+		uint8_t *buf;
+
+		snprintf(filepath, sizeof(filepath), "%s/%s", path, files[i].name);
+		printf("Adding %-48s | %8d bytes\n", filepath, files[i].stat.size);
+
+		fd = mcio_mcOpen(filepath, sceMcFileAttrReadable | sceMcFileAttrFile);
+		if (fd < 0) {
+			fclose(fh);
+			free(ps2fi);
+			free(files);
+			return fd;
+		}
+
+		buf = malloc(files[i].stat.size ? files[i].stat.size : 1);
+		if (!buf) {
+			mcio_mcClose(fd);
+			fclose(fh);
+			free(ps2fi);
+			free(files);
+			return -1000;
+		}
+
+		r = files[i].stat.size ? mcio_mcRead(fd, buf, files[i].stat.size) : 0;
+		mcio_mcClose(fd);
+
+		if (r != (int) files[i].stat.size) {
+			free(buf);
+			fclose(fh);
+			free(ps2fi);
+			free(files);
+			return -1004;
+		}
+
+		fwrite(buf, 1, files[i].stat.size, fh);
+		free(buf);
+	}
+
+	fclose(fh);
+	free(ps2fi);
+	free(files);
+
+	/* a PSV is rejected without its signature */
+	if (!psv_resign(output))
+		return -1005;
+
+	printf("Save succesfully exported to %s.\n", output);
+
+	return 0;
 }
 
 static int cmd_export_icons_png(const char* path)
@@ -834,11 +1026,19 @@ int main(int argc, char **argv)
 			cmd_args = &argv[3];
 		}
 		else if (!strcmp(argv[2], "--psu-export") || !strcmp(argv[2], "-px")) {
-			if (argc < 3) {
+			if (argc < 4) {
 				print_usage(argc, argv);
 				return 1;
 			}
 			cmd = CMD_PSU_EXPORT;
+			cmd_args = &argv[3];
+		}
+		else if (!strcmp(argv[2], "--psv-export") || !strcmp(argv[2], "-pv")) {
+			if (argc < 4) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_PSV_EXPORT;
 			cmd_args = &argv[3];
 		}
 		else {
@@ -890,6 +1090,11 @@ int main(int argc, char **argv)
 			r = cmd_export(cmd_args[0], cmd_args[1]);
 			if (r < 0)
 				fprintf(stderr, "Error: can't export save to PSU... (%d)\n", r);
+		}
+		else if (cmd == CMD_PSV_EXPORT) {
+			r = cmd_psv_export(cmd_args[0], cmd_args[1]);
+			if (r < 0)
+				fprintf(stderr, "Error: can't export save to PSV... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();
@@ -965,7 +1170,8 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* save changes */
+	/* save changes: every command after CMD_EXTRACT in the enum above
+	 * modifies the card, the ones before it only read from it */
 	if (cmd > CMD_EXTRACT && r == sceMcResSucceed) {
 		write_buffer(argv[1], data, dsize);
 		printf("VMC file saved: %s\n", argv[1]);
