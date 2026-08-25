@@ -12,6 +12,8 @@
 #include "ps1card.h"
 #include "util.h"
 #include "aes.h"
+#include "sha256.h"
+#include "psv_resign.h"
 
 
 //Memory Card's type (0 - unset, 1 - raw, 2 - gme, 3 - vgs, 4 - vmp);
@@ -171,10 +173,8 @@ static void MakeMcxCard(const uint8_t* rawCard, FILE* fp)
     memset(mcxCard, 0, 0x80);
     memcpy(mcxCard + 0x80, rawCard, PS1CARD_SIZE);
     
-//    using (SHA256 sha = SHA256.Create())
-//        hash = sha.ComputeHash(mcxCard, 0, 0x20080);
-//    Array.Copy(hash, 0, mcxCard, 0x20080, 0x20);
-    memset(mcxCard + 0x20080, 0xFF, 0x20);
+    //SHA-256 over everything before it, then the whole image is encrypted
+    SHA256(mcxCard, 0x20080, mcxCard + 0x20080);
 
     AesCbcEncrypt(mcxCard, 0x200A0, mcxKey, mcxIv);
     fwrite(mcxCard, 1, 0x200A0, fp);
@@ -211,13 +211,21 @@ static void setPsvHeader(const char* saveFilename, uint32_t saveLength, FILE* fp
     psvSave[0x3C] = 1;
     psvSave[0x44] = 0x84;
     psvSave[0x49] = 2;
-    psvSave[0x5D] = 0x20;
     psvSave[0x60] = 3;
     psvSave[0x61] = 0x90;
 
     memcpy(&psvSave[8], "www.bucanero.com.ar", 20);
-    memcpy(&psvSave[0x64], saveFilename, 0x20);
+    //Save filename field is 0x20 bytes, but saveName holds at most 20 chars + NUL,
+    //so bound the copy to the source and leave the rest of the field zeroed
+    strncpy((char*) &psvSave[0x64], saveFilename, 0x20);
+
+    //The save size is stored twice and both copies matter: 0x40 is the size
+    //the PS3 shows on the XMB, 0x5C is the length it actually copies onto the
+    //virtual memory card. Writing only the first one leaves saves longer than
+    //a single block truncated and unloadable on console.
+    //https://github.com/ShendoXT/memcardrex/pull/54
     memcpy(&psvSave[0x40], &saveLength, sizeof(uint32_t));
+    memcpy(&psvSave[0x5C], &saveLength, sizeof(uint32_t));
 
     fwrite(psvSave, 1, sizeof(psvSave), fp);
     return;
@@ -827,7 +835,7 @@ int saveSingleSave(const char* fileName, int slotNumber, int singleSaveType)
         case PS1SAVE_RAW:         //RAW single save
             break;
 
-        case PS1SAVE_PSV:         //PS3 unsigned save
+        case PS1SAVE_PSV:         //PS3 save
             setPsvHeader(ps1saves[slotNumber].saveName, outputData_Length - PS1CARD_HEADER_SIZE, binWriter);
             break;
     }
@@ -837,6 +845,10 @@ int saveSingleSave(const char* fileName, int slotNumber, int singleSaveType)
     //File is sucesfully saved, close the stream
     fclose(binWriter);
     free(outputData);
+
+    //A PSV needs a signature over the finished file, or a PS3 rejects it
+    if (singleSaveType == PS1SAVE_PSV)
+        return psv_resign(fileName);
 
     return true;
 }
@@ -988,6 +1000,11 @@ int saveMemoryCard(const char* fileName, int memoryCardType, int fixData)
 
     //File is sucesfully saved, close the stream
     fclose(binWriter);
+
+    //A VMP needs a signature over the finished image, or a PSP/Vita
+    //rejects the card. MCX is hashed and encrypted in MakeMcxCard().
+    if (memoryCardType == PS1CARD_VMP)
+        return vmp_resign(fileName);
 
     return true;
 }

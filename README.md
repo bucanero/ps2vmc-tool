@@ -34,6 +34,7 @@ Available commands:
 	 --psv-import, -pi <PSV filepath>
 	 --psu-import, -pu <PSU filepath>
 	 --psu-export, -px <mc path> <output filepath>
+	 --psv-export, -pv <mc path> <output filepath>
 ```
 
 ---
@@ -63,6 +64,7 @@ Available commands:
 	 --gme-image, -gme <output filepath>
 	 --vgs-image, -vgs <output filepath>
 	 --vmp-image, -vmp <output filepath>
+	 --mcx-image, -mcx <output filepath>
 	 --inject-save, -in <.MCS/.PSV/.PSX/.RAW/.PS1 input filepath>
 	 --extract-save, -x <slot #> <RAW output filepath>
 	 --arx-export, -arx <slot #> <ActionReplay output filepath>
@@ -75,6 +77,28 @@ Available commands:
 ```
 make
 ```
+
+This builds both tools. `make ps1` and `make ps2` build just one. The two
+programs are independent and link only what they use — the PS1 tool contains
+no PS2 filesystem code, and the PS2 tool contains no PS1 card code — sharing
+only `util.c`, `aes.c` and the signing files.
+
+### Save signing
+
+`.psv` saves and `.vmp` memory card images carry an HMAC-SHA1 signature, and
+`.mcx` images a SHA-256 digest; without them a PS3, PSP or Vita rejects the
+file. These are produced by `src/psv_resign.c`, based on ps3-psvresigner and
+MCR2VMP by [@dots_tb](https://github.com/dots-tb) as carried in
+[apollo-ps4](https://github.com/bucanero/apollo-ps4).
+
+The signature itself is plain HMAC-SHA1 (`src/hmac.c`, RFC 2104) keyed by the
+derived salt: the salt is 0x40 bytes, exactly one SHA-1 block, so no key
+normalisation applies. The original code spelled the pads out by hand — 0x36,
+then xor 0x6A to reach the 0x5C outer pad — which obscured that.
+
+The hashes come from `src/sha1.c` (SHA-1 in C by Steve Reid, public domain) and
+`src/sha256.c` (SHA-256 from FIPS PUB 180-4). AES-ECB is needed for the salt
+derivation, so the build defines `ECB=1` for the bundled tiny-AES.
 
 ## Credits
 
