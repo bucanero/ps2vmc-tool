@@ -88,17 +88,12 @@ only `util.c`, `aes.c` and the signing files.
 `.psv` saves and `.vmp` memory card images carry an HMAC-SHA1 signature, and
 `.mcx` images a SHA-256 digest; without them a PS3, PSP or Vita rejects the
 file. These are produced by `src/psv_resign.c`, based on ps3-psvresigner and
-MCR2VMP by [@dots_tb](https://github.com/dots-tb) as carried in
-[apollo-ps4](https://github.com/bucanero/apollo-ps4).
+MCR2VMP by [@dots_tb](https://github.com/dots-tb).
 
 The signature itself is plain HMAC-SHA1 (`src/hmac.c`, RFC 2104) keyed by the
 derived salt: the salt is 0x40 bytes, exactly one SHA-1 block, so no key
 normalisation applies. The original code spelled the pads out by hand — 0x36,
 then xor 0x6A to reach the 0x5C outer pad — which obscured that.
-
-The hashes come from `src/sha1.c` (SHA-1 in C by Steve Reid, public domain) and
-`src/sha256.c` (SHA-256 from FIPS PUB 180-4). AES-ECB is needed for the salt
-derivation, so the build defines `ECB=1` for the bundled tiny-AES.
 
 ## Credits
 
