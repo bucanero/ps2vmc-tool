@@ -11,7 +11,7 @@ dependencies. The whole app is one self-contained `index.html`.
 
 **Option 1 — just open the file**
 
-Double-click `web/index.html`, or drag it onto a browser window. That's it.
+Double-click `web-ps1/index.html`, or drag it onto a browser window. That's it.
 
 **Option 2 — serve it locally** (needed only if your browser restricts `file://` pages)
 
@@ -19,7 +19,7 @@ Double-click `web/index.html`, or drag it onto a browser window. That's it.
 python3 -m http.server 8000
 ```
 
-Then open <http://localhost:8000/web/index.html>.
+Then open <http://localhost:8000/web-ps1/index.html>.
 
 To share it with others, drop `index.html` on any static host (GitHub Pages, Netlify,
 an S3 bucket) — there is no backend to deploy.
@@ -32,10 +32,12 @@ an S3 bucket) — there is no backend to deploy.
 | `--list` | The save grid + the 15-block strip |
 | `--icons <slot>` | *Export ▾ → Icon frames (.png)* — one 16×16 PNG per frame |
 | `--extract-save`, `--mcs-export`, `--arx-export`, `--psv-export` | *Export ▾* on any save |
+| *(improves on the CLI)* | `.psv` exports are signed, and carry a correct `dataSize` |
 | `--inject-save` | *Import save…*, or drop a save file onto an open card |
 | `--remove` | *Remove* on a save |
 | `--mc-format` | *Format card* |
 | `--raw-image`, `--gme-image`, `--vgs-image`, `--vmp-image` | *Download card ▾* |
+| `--mcx-image` | *Download card ▾ → .mcx* |
 | *(not in the CLI)* | *Delete / Undelete* — toggles the deleted flag instead of erasing |
 | *(not in the CLI)* | *Repair header* — rebuilds the block-0 signature and slot checksums |
 | *(not in the CLI)* | *Hex* — edit the save's raw bytes in place |
@@ -77,6 +79,57 @@ The editor is shared with the PS2 page. Because this page is deliberately one
 self-contained file, the module is inlined here rather than loaded as a script;
 `node web-ps2/test/hexedit.js` fails if the copy drifts from
 `web-ps2/hexedit.js`.
+
+## Signing
+
+A PS3 `.psv` carries a 20-byte SHA-1 signature at offset `0x1C`, keyed by a
+salt derived from the seed at `0x08`. The signature is plain HMAC-SHA1 keyed by
+that salt — it is exactly one SHA-1 block, so RFC 2104 needs no key
+normalisation. `ps1vmc-tool`'s `--psv-export` never filled it in, so its files
+were rejected as corrupt. Both this page and the CLI now sign them,
+using the algorithm from
+[psv-save-converter](https://github.com/bucanero/psv-save-converter): the seed
+is run through AES-128 (ECB for PS1, CBC for PS2) to derive a 0x40-byte key,
+which is then used in an HMAC-SHA1 over the whole file with the signature field
+zeroed.
+
+The header stores the save size **twice**, and both copies matter: `0x40` is
+the size the PS3 shows on the XMB, and `0x5C` is the length it actually copies
+onto the virtual memory card. `ps1vmc-tool` hardcoded `0x5C` to 8192, so any
+save longer than one block was truncated and would not load on console. Fixed
+in `src/ps1card.c`; see
+[memcardrex#54](https://github.com/ShendoXT/memcardrex/pull/54), where the same
+bug was found and fixed in MemcardRex.
+
+Output is byte-identical to psv-save-converter for every save on the sample
+cards, and `node web-ps2/test/psv.js` also compares it against the CLI's own
+`--psv-export` byte for byte outside the signature field, on single and
+multi-block saves alike.
+
+### VMP and MCX card images
+
+`.vmp` (PSP/Vita) images carry the *same* signature a PSV does, just at
+different offsets — seed at `0x0C`, signature at `0x20`, always the PS1 key
+derivation, over the whole 0x20080-byte image. `.mcx` images instead hold a
+SHA-256 of everything before `0x20080`, written at `0x20080`, after which the
+whole image is AES-CBC encrypted.
+
+`ps1vmc-tool` used to write neither: its `.vmp` left the signature field zeroed
+and its `.mcx` filled the digest with `0xFF`. Both are now signed, in the page
+and in the CLI, following
+[apollo-ps4](https://github.com/bucanero/apollo-ps4/blob/main/source/psv_resign.c).
+The two produce byte-identical files, which the test suite checks.
+
+### Where the code lives
+
+`web-ps2/cryptoutil.js` holds the AES-128 (ECB and CBC, both directions),
+SHA-1, SHA-256 and HMAC-SHA1 used by everything above — one implementation rather than a
+copy per page. `web-ps2/psv.js` builds on it for the PSV and VMP signatures;
+MCX signing sits with the MCX writer in the card code.
+
+Both modules are inlined into this page, the same arrangement as the hex
+editor, and `node web-ps2/test/psv.js` fails if any inlined copy drifts from
+its source.
 
 ## Notes
 

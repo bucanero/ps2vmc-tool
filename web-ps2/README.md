@@ -34,7 +34,8 @@ backend, just eight static files, all of them plain text.
 | `--inject-file` | *Add file…* in the detail view |
 | `--remove`, `--remove-directory` | *Delete* on a save card or on a single file inside it |
 | `--make-directory` | *New folder* |
-| `--psu-export` | *Export .PSU* on a save card |
+| `--psu-export` | *Export ▾ → PSU* on a save card |
+| `--psv-export` | *Export ▾ → PSV* — a signed PS3 save |
 | `--psu-import`, `--psv-import` | *Import save…* (the format is detected from the file) |
 | `--mc-image` | *Download card ▾ → Raw, ECC stripped* |
 | `--ecc-image` | *Download card ▾ → With ECC spare* |
@@ -60,6 +61,8 @@ index.html        markup and styles
 app.js            UI logic
 ps2vmc.js         JS API over the wasm module (strings, Uint8Arrays, objects)
 ps2icon.js        .ico and icon.sys parsers
+cryptoutil.js     AES-128, SHA-1, SHA-256, HMAC-SHA1, shared by all of the below
+psv.js            PSV and VMP signing, PSV construction (shared with PS1)
 icon3d.js         WebGL icon renderer + animation logic
 hexedit.js        the hex editor modal (shared with the PS1 page)
 ps2vmc-wasm.js         generated: emscripten glue (~13 KB)
@@ -100,12 +103,13 @@ brew install emscripten     # or apt install emscripten
 
 ## Tests
 
-Both suites need the native tool built first (`make`):
+All four suites need the native tools built first (`make`):
 
 ```bash
 node web-ps2/test/difftest.js    # wasm vs CLI, 92 checks
 node web-ps2/test/icontest.js    # icon parsing and animation, 20 checks
 node web-ps2/test/hexedit.js     # hex editing on both cards, 38 checks
+node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 103 checks
 ```
 
 `difftest.js` runs each operation twice — once through the wasm module, once
@@ -124,6 +128,29 @@ anywhere else still fails.
 decoder against the CLI's own `--icons-png` output byte for byte (both the
 uncompressed and RLE encodings), and checks the animation logic on all 60
 animated icons.
+
+## PSV export
+
+*Export ▾* on a save card offers `.PSU` and `.PSV`. A PSV carries a 20-byte
+SHA-1 signature at `0x1C` keyed by a salt derived from the seed at `0x08`; the
+algorithm comes from
+[psv-save-converter](https://github.com/bucanero/psv-save-converter). The CLI
+grew a matching `--psv-export`, and the two produce byte-identical files.
+
+File modes are read with `stat()` rather than taken from the directory
+listing, because mcio's readdir rebuilds mode from a subset of the flags and
+drops the `Exists`/`Closed` bits a PSV expects. The CLI's PSU exporter re-stats
+for the same reason.
+
+Output is byte-identical to psv-save-converter across the sample cards, with
+one deliberate exception: for a save whose `icon.sys` is not exactly 964 bytes,
+the reference reads only `sizeof(ps2_IconSys_t)` of it, desynchronises its own
+PSU stream and writes a nonsensical `displaySize`. One sample save (976-byte
+`icon.sys`) hits this; we write the true total instead.
+
+The PS1 side of `psv.js` carries its own note: a PS1 PSV stores the save size
+twice, at `0x40` and `0x5C`, and both have to be right or multi-block saves are
+truncated on console. See `web-ps1/README.md`.
 
 ## Hex editor
 

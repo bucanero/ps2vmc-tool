@@ -33,18 +33,25 @@ const END = "/* ===== END inlined copy of web-ps2/hexedit.js";
  * hex editor (its UMD wrapper would hijack module.exports here) and minus the
  * UI half, which needs a DOM. */
 function loadPs1Core() {
-  const html = fs.readFileSync(path.join(ROOT, "web", "index.html"), "utf8");
+  const html = fs.readFileSync(path.join(ROOT, "web-ps1", "index.html"), "utf8");
   const script = /<script>\n([\s\S]*?)\n<\/script>/.exec(html)[1];
 
-  const b = script.indexOf(BEGIN);
-  const e = script.indexOf(END);
-  const withoutHex = b >= 0 && e > b
-    ? script.slice(0, b) + script.slice(script.indexOf("*/", e) + 2)
-    : script;
+  let stripped = script;
+  for (const [bm, em] of [[BEGIN, END],
+                          ["/* ===== BEGIN inlined copy of web-ps2/cryptoutil.js",
+                           "/* ===== END inlined copy of web-ps2/cryptoutil.js"],
+                          ["/* ===== BEGIN inlined copy of web-ps2/psv.js",
+                           "/* ===== END inlined copy of web-ps2/psv.js"]]) {
+    const i = stripped.indexOf(bm), j = stripped.indexOf(em);
+    if (i >= 0 && j > i) stripped = stripped.slice(0, i) + stripped.slice(stripped.indexOf("*/", j) + 2);
+  }
 
-  const core = withoutHex.slice(0, withoutHex.indexOf("* UI") - 75);
+  const core = stripped.slice(0, stripped.indexOf("* UI") - 75);
   const tmp = path.join(os.tmpdir(), "ps1core-hex-" + process.pid + ".js");
-  fs.writeFileSync(tmp, core + "\nmodule.exports = { PS1 };\n");
+  fs.writeFileSync(tmp,
+    'const CryptoUtil = require(' + JSON.stringify(path.join(__dirname, "..", "cryptoutil.js")) + ');\n' +
+    'const PSV = require(' + JSON.stringify(path.join(__dirname, "..", "psv.js")) + ');\n' +
+    core + "\nmodule.exports = { PS1 };\n");
   const mod = require(tmp);
   fs.unlinkSync(tmp);
   return mod.PS1;
@@ -54,7 +61,7 @@ async function main() {
   /* ---------- 1. the inlined copy must match the shared module ---------- */
   console.log("\n=== inlined copy vs web-ps2/hexedit.js ===");
   const shared = fs.readFileSync(path.join(ROOT, "web-ps2", "hexedit.js"), "utf8");
-  const html = fs.readFileSync(path.join(ROOT, "web", "index.html"), "utf8");
+  const html = fs.readFileSync(path.join(ROOT, "web-ps1", "index.html"), "utf8");
 
   const b = html.indexOf(BEGIN);
   const e = html.indexOf(END);
@@ -64,7 +71,7 @@ async function main() {
     const inlined = html.slice(html.indexOf("*/", b) + 3, e).replace(/\s+$/, "");
     ok("inlined copy is identical to the shared module",
        inlined === shared.replace(/\s+$/, ""),
-       "the two have drifted — re-copy web-ps2/hexedit.js into web/index.html");
+       "the two have drifted — re-copy web-ps2/hexedit.js into web-ps1/index.html");
   }
 
   ok("PS2 page loads the editor as a script",

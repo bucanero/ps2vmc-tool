@@ -244,19 +244,43 @@ footer a { color: var(--fg-dim); }
 <script>
 "use strict";
 
-/* =====================================================================
- * AES-128-CBC  (needed for MCX cards; WebCrypto is unavailable on file://
- * and always applies PKCS#7 padding, which MCX does not use)
- * ===================================================================== */
-const AES = (() => {
+/* ===== BEGIN inlined copy of web-ps2/cryptoutil.js ===================
+ * Shared AES/SHA implementation. This page ships as a single file, so it
+ * is inlined; the copy must stay byte-identical to web-ps2/cryptoutil.js
+ * and web-ps2/test/psv.js enforces that.
+ * ==================================================================== */
+/*
+ * cryptoutil.js - the small amount of crypto the memory card tools need.
+ *
+ * AES-128 (ECB and CBC, both directions), SHA-1, SHA-256 and HMAC-SHA1, in
+ * one place so the PS1 page, the PS2 page and the PSV/VMP/MCX signing code all
+ * share a single implementation.
+ *
+ * Deliberately not WebCrypto: that is unavailable on file:// pages, is async,
+ * and forces PKCS#7 padding on CBC, none of which suits these formats.
+ *
+ * GPLv3, same as the rest of the repository.
+ */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.CryptoUtil = factory();
+})(typeof self !== "undefined" ? self : this, function () {
+  "use strict";
+
+  /* ------------------------------------------------------------------ */
+  /* AES-128                                                            */
+  /* ------------------------------------------------------------------ */
+
   const SBOX = new Uint8Array(256), RSBOX = new Uint8Array(256);
-  const hex =
-    "637c777bf26b6fc53001672bfed7ab76ca82c97dfa5947f0add4a2af9ca472c0b7fd9326363ff7cc34a5e5f171d8311504c723c31896059a071280e2eb27b275" +
-    "09832c1a1b6e5aa0523bd6b329e32f8453d100ed20fcb15b6acbbe394a4c58cfd0efaafb434d338545f9027f503c9fa851a3408f929d38f5bcb6da2110fff3d2" +
-    "cd0c13ec5f974417c4a77e3d645d197360814fdc222a908846eeb814de5e0bdbe0323a0a4906245cc2d3ac629195e479e7c8376d8dd54ea96c56f4ea657aae08" +
-    "ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9ee1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16";
-  for (let i = 0; i < 256; i++) SBOX[i] = parseInt(hex.substr(i * 2, 2), 16);
-  for (let i = 0; i < 256; i++) RSBOX[SBOX[i]] = i;
+  (function () {
+    const hex =
+      "637c777bf26b6fc53001672bfed7ab76ca82c97dfa5947f0add4a2af9ca472c0b7fd9326363ff7cc34a5e5f171d8311504c723c31896059a071280e2eb27b275" +
+      "09832c1a1b6e5aa0523bd6b329e32f8453d100ed20fcb15b6acbbe394a4c58cfd0efaafb434d338545f9027f503c9fa851a3408f929d38f5bcb6da2110fff3d2" +
+      "cd0c13ec5f974417c4a77e3d645d197360814fdc222a908846eeb814de5e0bdbe0323a0a4906245cc2d3ac629195e479e7c8376d8dd54ea96c56f4ea657aae08" +
+      "ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9ee1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16";
+    for (let i = 0; i < 256; i++) SBOX[i] = parseInt(hex.substr(i * 2, 2), 16);
+    for (let i = 0; i < 256; i++) RSBOX[SBOX[i]] = i;
+  })();
 
   const xtime = x => ((x << 1) ^ ((x & 0x80) ? 0x1b : 0)) & 0xff;
 
@@ -329,32 +353,459 @@ const AES = (() => {
     addRoundKey(s, w, 0);
   }
 
-  /* In-place CBC over `buf` (length must be a multiple of 16). */
-  function cbcEncrypt(buf, key, iv) {
-    const w = expandKey(key), prev = Uint8Array.from(iv), blk = new Uint8Array(16);
-    for (let o = 0; o + 16 <= buf.length; o += 16) {
-      for (let i = 0; i < 16; i++) blk[i] = buf[o + i] ^ prev[i];
-      encBlock(blk, w);
-      buf.set(blk, o); prev.set(blk);
+  const aes = {
+    /** One 16-byte block, returned as a new array. */
+    ecbEncrypt(block, key) {
+      const s = Uint8Array.from(block);
+      encBlock(s, expandKey(key));
+      return s;
+    },
+    ecbDecrypt(block, key) {
+      const s = Uint8Array.from(block);
+      decBlock(s, expandKey(key));
+      return s;
+    },
+    /** In place, over whole blocks; no padding is added or expected. */
+    cbcEncrypt(buf, key, iv) {
+      const w = expandKey(key), prev = Uint8Array.from(iv), blk = new Uint8Array(16);
+      for (let o = 0; o + 16 <= buf.length; o += 16) {
+        for (let i = 0; i < 16; i++) blk[i] = buf[o + i] ^ prev[i];
+        encBlock(blk, w);
+        buf.set(blk, o);
+        prev.set(blk);
+      }
+      return buf;
+    },
+    cbcDecrypt(buf, key, iv) {
+      const w = expandKey(key), prev = Uint8Array.from(iv);
+      const blk = new Uint8Array(16), cipher = new Uint8Array(16);
+      for (let o = 0; o + 16 <= buf.length; o += 16) {
+        cipher.set(buf.subarray(o, o + 16));
+        blk.set(cipher);
+        decBlock(blk, w);
+        for (let i = 0; i < 16; i++) buf[o + i] = blk[i] ^ prev[i];
+        prev.set(cipher);
+      }
+      return buf;
     }
-    return buf;
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* hashes                                                             */
+  /* ------------------------------------------------------------------ */
+
+  /* message || 0x80 || zero pad || 64-bit big-endian bit length */
+  function padMessage(chunks) {
+    let total = 0;
+    for (const c of chunks) total += c.length;
+
+    const padded = new Uint8Array((((total + 8) >> 6) + 1) << 6);
+    let o = 0;
+    for (const c of chunks) { padded.set(c, o); o += c.length; }
+    padded[total] = 0x80;
+
+    const dv = new DataView(padded.buffer);
+    const bits = total * 8;
+    dv.setUint32(padded.length - 8, Math.floor(bits / 0x100000000), false);
+    dv.setUint32(padded.length - 4, bits >>> 0, false);
+    return { padded, dv };
   }
-  function cbcDecrypt(buf, key, iv) {
-    const w = expandKey(key), prev = Uint8Array.from(iv);
-    const blk = new Uint8Array(16), cipher = new Uint8Array(16);
-    for (let o = 0; o + 16 <= buf.length; o += 16) {
-      cipher.set(buf.subarray(o, o + 16));
-      blk.set(cipher);
-      decBlock(blk, w);
-      for (let i = 0; i < 16; i++) buf[o + i] = blk[i] ^ prev[i];
-      prev.set(cipher);
+
+  const rol = (n, s) => (n << s) | (n >>> (32 - s));
+  const ror = (n, s) => (n >>> s) | (n << (32 - s));
+
+  /**
+   * @param {Array<Uint8Array>} chunks hashed as if concatenated
+   * @returns {Uint8Array} 20 bytes
+   */
+  function sha1(chunks) {
+    const { padded, dv } = padMessage(chunks);
+    let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe,
+        h3 = 0x10325476, h4 = 0xc3d2e1f0;
+    const w = new Int32Array(80);
+
+    for (let i = 0; i < padded.length; i += 64) {
+      for (let j = 0; j < 16; j++) w[j] = dv.getInt32(i + j * 4, false);
+      for (let j = 16; j < 80; j++) w[j] = rol(w[j - 3] ^ w[j - 8] ^ w[j - 14] ^ w[j - 16], 1);
+
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let j = 0; j < 80; j++) {
+        let f, k;
+        if (j < 20) { f = (b & c) | (~b & d); k = 0x5a827999; }
+        else if (j < 40) { f = b ^ c ^ d; k = 0x6ed9eba1; }
+        else if (j < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc; }
+        else { f = b ^ c ^ d; k = 0xca62c1d6; }
+        const t = (rol(a, 5) + f + e + k + w[j]) | 0;
+        e = d; d = c; c = rol(b, 30); b = a; a = t;
+      }
+      h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0;
+      h3 = (h3 + d) | 0; h4 = (h4 + e) | 0;
     }
+
+    const out = new Uint8Array(20), odv = new DataView(out.buffer);
+    [h0, h1, h2, h3, h4].forEach((h, i) => odv.setInt32(i * 4, h, false));
+    return out;
+  }
+
+  const K256 = new Int32Array([
+    0x428a2f98|0, 0x71374491|0, 0xb5c0fbcf|0, 0xe9b5dba5|0, 0x3956c25b|0, 0x59f111f1|0, 0x923f82a4|0, 0xab1c5ed5|0,
+    0xd807aa98|0, 0x12835b01|0, 0x243185be|0, 0x550c7dc3|0, 0x72be5d74|0, 0x80deb1fe|0, 0x9bdc06a7|0, 0xc19bf174|0,
+    0xe49b69c1|0, 0xefbe4786|0, 0x0fc19dc6|0, 0x240ca1cc|0, 0x2de92c6f|0, 0x4a7484aa|0, 0x5cb0a9dc|0, 0x76f988da|0,
+    0x983e5152|0, 0xa831c66d|0, 0xb00327c8|0, 0xbf597fc7|0, 0xc6e00bf3|0, 0xd5a79147|0, 0x06ca6351|0, 0x14292967|0,
+    0x27b70a85|0, 0x2e1b2138|0, 0x4d2c6dfc|0, 0x53380d13|0, 0x650a7354|0, 0x766a0abb|0, 0x81c2c92e|0, 0x92722c85|0,
+    0xa2bfe8a1|0, 0xa81a664b|0, 0xc24b8b70|0, 0xc76c51a3|0, 0xd192e819|0, 0xd6990624|0, 0xf40e3585|0, 0x106aa070|0,
+    0x19a4c116|0, 0x1e376c08|0, 0x2748774c|0, 0x34b0bcb5|0, 0x391c0cb3|0, 0x4ed8aa4a|0, 0x5b9cca4f|0, 0x682e6ff3|0,
+    0x748f82ee|0, 0x78a5636f|0, 0x84c87814|0, 0x8cc70208|0, 0x90befffa|0, 0xa4506ceb|0, 0xbef9a3f7|0, 0xc67178f2|0
+  ]);
+
+  /**
+   * @param {Array<Uint8Array>} chunks hashed as if concatenated
+   * @returns {Uint8Array} 32 bytes
+   */
+  function sha256(chunks) {
+    const { padded, dv } = padMessage(chunks);
+    const h = new Int32Array([
+      0x6a09e667|0, 0xbb67ae85|0, 0x3c6ef372|0, 0xa54ff53a|0,
+      0x510e527f|0, 0x9b05688c|0, 0x1f83d9ab|0, 0x5be0cd19|0
+    ]);
+    const w = new Int32Array(64);
+
+    for (let i = 0; i < padded.length; i += 64) {
+      for (let j = 0; j < 16; j++) w[j] = dv.getInt32(i + j * 4, false);
+      for (let j = 16; j < 64; j++) {
+        const x = w[j - 15], y = w[j - 2];
+        const s0 = ror(x, 7) ^ ror(x, 18) ^ (x >>> 3);
+        const s1 = ror(y, 17) ^ ror(y, 19) ^ (y >>> 10);
+        w[j] = (w[j - 16] + s0 + w[j - 7] + s1) | 0;
+      }
+
+      let a = h[0], b = h[1], c = h[2], d = h[3],
+          e = h[4], f = h[5], g = h[6], hh = h[7];
+
+      for (let j = 0; j < 64; j++) {
+        const S1 = ror(e, 6) ^ ror(e, 11) ^ ror(e, 25);
+        const ch = (e & f) ^ (~e & g);
+        const t1 = (hh + S1 + ch + K256[j] + w[j]) | 0;
+        const S0 = ror(a, 2) ^ ror(a, 13) ^ ror(a, 22);
+        const maj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + maj) | 0;
+        hh = g; g = f; f = e; e = (d + t1) | 0;
+        d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+
+      h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
+      h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + hh) | 0;
+    }
+
+    const out = new Uint8Array(32), odv = new DataView(out.buffer);
+    for (let i = 0; i < 8; i++) odv.setInt32(i * 4, h[i], false);
+    return out;
+  }
+
+  const SHA1_BLOCK = 64;
+
+  /**
+   * HMAC-SHA1, RFC 2104.
+   *
+   * @param {Uint8Array} key any length; hashed if longer than the 64-byte
+   *        block, zero padded if shorter
+   * @param {Array<Uint8Array>} chunks the message, as if concatenated
+   * @returns {Uint8Array} 20 bytes
+   */
+  function hmacSha1(key, chunks) {
+    let k = key;
+    if (k.length > SHA1_BLOCK) k = sha1([k]);
+
+    const ipad = new Uint8Array(SHA1_BLOCK);
+    const opad = new Uint8Array(SHA1_BLOCK);
+    ipad.set(k);
+    opad.set(k);
+    for (let i = 0; i < SHA1_BLOCK; i++) {
+      ipad[i] ^= 0x36;
+      opad[i] ^= 0x5c;
+    }
+
+    return sha1([opad, sha1([ipad].concat(chunks))]);
+  }
+
+  return { aes, sha1, sha256, hmacSha1 };
+});
+/* ===== END inlined copy of web-ps2/cryptoutil.js ===================== */
+
+/* ===== BEGIN inlined copy of web-ps2/psv.js ==========================
+ * This page ships as a single self-contained file, so the PSV signing
+ * module is inlined rather than loaded as a script. The copy below must
+ * stay byte-identical to web-ps2/psv.js; web-ps2/test/psv.js enforces it.
+ * ==================================================================== */
+/*
+ * psv.js - PSV and VMP signing, and PSV header construction.
+ *
+ * Both formats carry a 20-byte signature produced the same way: a salt is
+ * derived from a seed stored in the file, then used as the HMAC-SHA1 key over
+ * the whole file with the signature field zeroed. Only the offsets differ:
+ *
+ *     .psv   seed 0x08, signature 0x1C, PS1 or PS2 derivation per byte 0x3C
+ *     .vmp   seed 0x0C, signature 0x20, always the PS1 derivation
+ *
+ * Ported from psv-save-converter and apollo-ps4 by Bucanero, both based on
+ * ps3-psvresigner / MCR2VMP by @dots_tb:
+ *   https://github.com/bucanero/psv-save-converter
+ *   https://github.com/bucanero/apollo-ps4/blob/main/source/psv_resign.c
+ *
+ * AES and SHA-1 come from cryptoutil.js.
+ *
+ * GPLv3, same as the rest of the repository.
+ */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.PSV = factory();
+})(typeof self !== "undefined" ? self : this, function () {
+  "use strict";
+
+  /* cryptoutil.js: a browser global, or a sibling module under Node */
+  const CU = (typeof CryptoUtil !== "undefined") ? CryptoUtil
+           : (typeof require !== "undefined" ? require("./cryptoutil.js") : null);
+  if (!CU) throw new Error("cryptoutil.js must be loaded before psv.js");
+
+  const AES = CU.aes;
+  const sha1 = CU.sha1;   /* re-exported for callers */
+
+  /* ------------------------------------------------------------------ */
+  /* signing                                                            */
+  /* ------------------------------------------------------------------ */
+
+  const SEED_OFFSET = 0x08;
+  const HASH_OFFSET = 0x1c;
+  const TYPE_OFFSET = 0x3c;
+
+  const KEY_PS2 = new Uint8Array([0xEA,0x02,0xCE,0xEF,0x5B,0xB4,0xD2,0x99,0x8F,0x61,0x19,0x10,0xD7,0x7F,0x51,0xC6]);
+  const KEY_PS1 = new Uint8Array([0xAB,0x5A,0xBC,0x9F,0xC1,0xF4,0x9D,0xE6,0xA0,0x51,0xDB,0xAE,0xFA,0x51,0x88,0x59]);
+  const IV      = new Uint8Array([0xB3,0x0F,0xFE,0xED,0xB7,0xDC,0x5E,0xB7,0x13,0x3D,0xA6,0x0D,0x1B,0x6B,0x2C,0xDC]);
+
+  /** Default seed, matching psv-save-converter's output. */
+  const SALT_SEED = "www.bucanero.com.ar";
+
+  /* VMP: the same signature, at its own offsets, over a 0x20080-byte image */
+  const VMP_SEED_OFFSET = 0x0c;
+  const VMP_HASH_OFFSET = 0x20;
+  const VMP_SIZE = 0x20080;
+
+  /** Derive the 0x40-byte HMAC key from a 0x14-byte seed. */
+  function deriveSalt(seed, type) {
+    const salt = new Uint8Array(0x40);
+
+    if (type === 1) {
+      /* PS1: one ECB decrypt and one ECB encrypt of the seed's first block */
+      salt.set(AES.ecbDecrypt(seed.subarray(0, 0x10), KEY_PS1), 0);
+      salt.set(AES.ecbEncrypt(seed.subarray(0, 0x10), KEY_PS1), 0x10);
+
+      for (let i = 0; i < 0x10; i++) salt[i] ^= IV[i];
+
+      /* the seed's remaining 4 bytes, padded with 0xFF, xored into block 2 */
+      const tail = new Uint8Array(0x14).fill(0xff);
+      tail.set(seed.subarray(0x10, 0x14), 0);
+      for (let i = 0; i < 0x10; i++) salt[0x10 + i] ^= tail[i];
+    } else if (type === 2) {
+      /* PS2: CBC-decrypt the seed (zero padded) as one 0x40 buffer */
+      salt.set(seed, 0);
+      AES.cbcDecrypt(salt, KEY_PS2, IV);
+    } else {
+      throw new Error("unsupported PSV type " + type);
+    }
+
+    salt.fill(0, 0x14);
+    return salt;
+  }
+
+  /**
+   * Sign a file in place: HMAC-SHA1 over the whole buffer, keyed by the salt
+   * derived from `seedOffset`, written back at `hashOffset`.
+   *
+   * The salt is 0x40 bytes, exactly one SHA-1 block, so this is plain
+   * HMAC-SHA1 with no key normalisation — the original code spelled the pads
+   * out by hand (0x36, then ^0x6A to reach 0x5C) rather than naming it.
+   */
+  function signBuffer(buf, seedOffset, hashOffset, type) {
+    const salt = deriveSalt(buf.subarray(seedOffset, seedOffset + 0x14), type);
+
+    buf.fill(0, hashOffset, hashOffset + 0x14);
+    buf.set(CU.hmacSha1(salt, [buf]), hashOffset);
+
     return buf;
   }
 
-  return { cbcEncrypt, cbcDecrypt };
-})();
+  /**
+   * Compute and write a PSV's signature at 0x1C, in place.
+   * @param {Uint8Array} psv a complete PSV file
+   * @returns {Uint8Array} the same buffer
+   */
+  function sign(psv) {
+    if (psv.length < 0x40) throw new Error("too small to be a PSV");
+    if (!(psv[0] === 0x00 && psv[1] === 0x56 && psv[2] === 0x53 && psv[3] === 0x50))
+      throw new Error("not a PSV file");
 
+    return signBuffer(psv, SEED_OFFSET, HASH_OFFSET, psv[TYPE_OFFSET]);
+  }
+
+  /**
+   * Compute and write a VMP memory card image's signature at 0x20, in place.
+   * A VMP is a 0x80-byte header followed by the raw 128 KB card.
+   * @param {Uint8Array} vmp a complete VMP image
+   * @returns {Uint8Array} the same buffer
+   */
+  function signVmp(vmp) {
+    if (vmp.length !== VMP_SIZE)
+      throw new Error("a VMP image is " + VMP_SIZE + " bytes, got " + vmp.length);
+    if (!(vmp[0] === 0x00 && vmp[1] === 0x50 && vmp[2] === 0x4d && vmp[3] === 0x56))
+      throw new Error("not a VMP file");
+
+    /* always the PS1 derivation, whatever the card holds */
+    return signBuffer(vmp, VMP_SEED_OFFSET, VMP_HASH_OFFSET, 1);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* builders                                                           */
+  /* ------------------------------------------------------------------ */
+
+  function ascii(str, into, at, max) {
+    for (let i = 0; i < Math.min(str.length, max); i++)
+      into[at + i] = str.charCodeAt(i) & 0xff;
+  }
+
+  function psvHeader(headerSize, saveType) {
+    const h = new Uint8Array(0x40);
+    h[1] = 0x56; h[2] = 0x53; h[3] = 0x50;            /* "\0VSP" */
+    ascii(SALT_SEED, h, SEED_OFFSET, 0x14);
+    const dv = new DataView(h.buffer);
+    dv.setUint32(0x38, headerSize, true);
+    dv.setUint32(TYPE_OFFSET, saveType, true);
+    return h;
+  }
+
+  /**
+   * Build a signed PS1 .PSV.
+   * @param {string} saveName the 20-char product code / filename
+   * @param {Uint8Array} data raw save data (a whole number of 8 KB blocks)
+   */
+  function buildPs1(saveName, data) {
+    const out = new Uint8Array(0x84 + data.length);
+    out.set(psvHeader(0x14, 1), 0);
+
+    const dv = new DataView(out.buffer);
+    /* The save size appears twice, and both copies matter: 0x40 is what the
+     * PS3 shows on the XMB, 0x5C is the length it actually copies onto the
+     * virtual memory card. Writing only the first leaves saves longer than one
+     * block truncated and unloadable on console.
+     * https://github.com/ShendoXT/memcardrex/pull/54 */
+    dv.setUint32(0x40, data.length, true);   /* size shown by the XMB */
+    dv.setUint32(0x44, 0x84, true);          /* startOfSaveData */
+    dv.setUint32(0x48, 0x200, true);         /* 0x200 */
+    dv.setUint32(0x5c, data.length, true);   /* size copied to the memory card */
+    dv.setUint32(0x60, 0x9003, true);        /* unknown1 */
+    ascii(saveName, out, 0x64, 20);          /* prodCode */
+
+    out.set(data, 0x84);
+    return sign(out);
+  }
+
+  /* PS2 structure sizes, from ps2mc.h */
+  const PS2_HDR = 0x28;        /* ps2_header_t    */
+  const PS2_DIR = 0x38;        /* ps2_MainDirInfo_t */
+  const PS2_FILE = 0x3c;       /* ps2_FileInfo_t  */
+
+  function putDate(dv, at, d) {
+    const t = d || {};
+    dv.setUint8(at, 0);
+    dv.setUint8(at + 1, t.sec || 0);
+    dv.setUint8(at + 2, t.min || 0);
+    dv.setUint8(at + 3, t.hour || 0);
+    dv.setUint8(at + 4, t.day || 0);
+    dv.setUint8(at + 5, t.month || 0);
+    dv.setUint16(at + 6, t.year || 0, true);
+  }
+
+  /**
+   * Build a signed PS2 .PSV from one save directory.
+   *
+   * @param {object} save
+   *   dir   {name, mode, ctime, mtime, entryCount}  entryCount includes "." and ".."
+   *   files [{name, mode, ctime, mtime, data}]      in card order
+   *   icons {iconName, copyIconName, deleteIconName} from icon.sys, optional
+   */
+  function buildPs2(save) {
+    const files = save.files;
+    const n = files.length;
+    const dataStart = 0x40 + PS2_HDR + PS2_DIR + PS2_FILE * n;
+
+    let total = 0;
+    for (const f of files) total += f.data.length;
+
+    const out = new Uint8Array(dataStart + total);
+    out.set(psvHeader(0x2c, 2), 0);
+    const dv = new DataView(out.buffer);
+
+    /* ---- ps2_header_t: sizes and positions of icon.sys and the icons ---- */
+    const icons = save.icons || {};
+    let pos = dataStart;
+    const placed = files.map(f => {
+      const at = pos;
+      pos += f.data.length;
+      return { name: f.name, at, size: f.data.length };
+    });
+    const find = name => placed.find(p => name && p.name === name);
+
+    const sys = find("icon.sys");
+    const i1 = find(icons.iconName), i2 = find(icons.copyIconName), i3 = find(icons.deleteIconName);
+
+    dv.setUint32(0x40, total, true);                              /* displaySize */
+    dv.setUint32(0x44, sys ? sys.at : 0, true);                   /* sysPos */
+    dv.setUint32(0x48, sys ? sys.size : 0, true);                 /* sysSize */
+    dv.setUint32(0x4c, i1 ? i1.at : 0, true);                     /* icon1Pos */
+    dv.setUint32(0x50, i1 ? i1.size : 0, true);                   /* icon1Size */
+    dv.setUint32(0x54, i2 ? i2.at : 0, true);                     /* icon2Pos */
+    dv.setUint32(0x58, i2 ? i2.size : 0, true);                   /* icon2Size */
+    dv.setUint32(0x5c, i3 ? i3.at : 0, true);                     /* icon3Pos */
+    dv.setUint32(0x60, i3 ? i3.size : 0, true);                   /* icon3Size */
+    dv.setUint32(0x64, n, true);                                  /* numberOfFiles */
+
+    /* ---- ps2_MainDirInfo_t ---- */
+    const dir = save.dir;
+    let o = 0x68;
+    putDate(dv, o, dir.ctime);
+    putDate(dv, o + 8, dir.mtime);
+    dv.setUint32(o + 16, dir.entryCount, true);   /* files + "." + ".." */
+    dv.setUint32(o + 20, dir.mode, true);
+    ascii(dir.name, out, o + 24, 32);
+
+    /* ---- ps2_FileInfo_t per file ---- */
+    o += PS2_DIR;
+    files.forEach((f, i) => {
+      const at = o + PS2_FILE * i;
+      putDate(dv, at, f.ctime);
+      putDate(dv, at + 8, f.mtime);
+      dv.setUint32(at + 16, f.data.length, true);
+      dv.setUint32(at + 20, f.mode, true);
+      ascii(f.name, out, at + 24, 32);
+      dv.setUint32(at + 56, placed[i].at, true);
+    });
+
+    /* ---- file data, packed with no padding ---- */
+    files.forEach((f, i) => out.set(f.data, placed[i].at));
+
+    return sign(out);
+  }
+
+  return {
+    sign, signVmp, buildPs1, buildPs2, sha1,
+    SALT_SEED, SEED_OFFSET, HASH_OFFSET, TYPE_OFFSET,
+    VMP_SEED_OFFSET, VMP_HASH_OFFSET, VMP_SIZE
+  };
+});
+/* ===== END inlined copy of web-ps2/psv.js ============================ */
+
+/* The PS1 card code below uses AES for MCX images; it comes from the
+ * inlined cryptoutil.js above. */
+const AES = CryptoUtil.aes;
 
 /* =====================================================================
  * PS1 memory card core  (JS port of src/ps1card.c)
@@ -697,18 +1148,9 @@ const PS1 = (() => {
       return out;
     }
     if (type === SAVE.PSV) {
-      const out = new Uint8Array(0x84 + body.length);
-      out[1] = 0x56; out[2] = 0x53; out[3] = 0x50;
-      out[0x38] = 0x14; out[0x3c] = 1; out[0x44] = 0x84;
-      out[0x49] = 2; out[0x5d] = 0x20; out[0x60] = 3; out[0x61] = 0x90;
-      const tag = "www.bucanero.com.ar";
-      for (let i = 0; i < tag.length; i++) out[8 + i] = tag.charCodeAt(i);
-      for (let i = 0; i < Math.min(0x20, s.name.length); i++) out[0x64 + i] = s.name.charCodeAt(i) & 0xff;
-      const len = body.length;
-      out[0x40] = len & 0xff; out[0x41] = (len >> 8) & 0xff;
-      out[0x42] = (len >> 16) & 0xff; out[0x43] = (len >>> 24) & 0xff;
-      out.set(body, 0x84);
-      return out;
+      /* Built and signed by the shared PSV module, so the file carries the
+       * SHA-1 signature a PS3 expects. */
+      return PSV.buildPs1(s.name, body);
     }
     return null;
   }
@@ -780,12 +1222,15 @@ const PS1 = (() => {
       out[1] = 0x50; out[2] = 0x4d; out[3] = 0x56;                  // "\0PMV"
       out[4] = 0x80;
       out.set(raw, 128);
-      return out;
+      /* A VMP carries the same signature a PSV does, at its own offsets.
+       * Without it a PSP or Vita rejects the card. */
+      return PSV.signVmp(out);
     }
     if (type === CARD.MCX) {
       const out = new Uint8Array(MCX_LEN);
       out.set(raw, 0x80);
-      out.fill(0xff, 0x20080, 0x200a0);   // SHA-256 slot (unsigned, as in the CLI)
+      /* SHA-256 over everything before it, then the whole image is encrypted */
+      out.set(CryptoUtil.sha256([out.subarray(0, 0x20080)]), 0x20080);
       AES.cbcEncrypt(out, MCX_KEY, MCX_IV);
       return out;
     }

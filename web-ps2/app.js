@@ -168,7 +168,7 @@ function mkSaveBtn(label, cls, fn) {
   const b = document.createElement("button");
   b.className = "tiny" + (cls ? " " + cls : "");
   b.textContent = label;
-  b.addEventListener("click", e => { e.stopPropagation(); fn(); });
+  b.addEventListener("click", e => { e.stopPropagation(); fn(b); });
   return b;
 }
 
@@ -250,7 +250,11 @@ function render() {
      * inside a save. Clicks must not bubble up to the card's open handler. */
     const acts = document.createElement("div");
     acts.className = "acts";
-    acts.appendChild(mkSaveBtn("Export .PSU", "", () => exportPsu(save)));
+    acts.appendChild(mkSaveBtn("Export \u25be", "", (btn) => popMenu(btn, [
+      { lbl: "Export save as" },
+      { text: "PSU  (uLaunchELF / EMS)", fn: () => exportPsu(save) },
+      { text: "PSV  (PS3, signed)", fn: () => exportPsv(save) }
+    ])));
     acts.appendChild(mkSaveBtn("Delete", "danger", () => deleteSave(save)));
     body.appendChild(acts);
 
@@ -546,6 +550,51 @@ function exportPsu(save) {
   try {
     download(vmc.psuExport(save.path), safeName(save.name, "save") + ".psu");
   } catch (e) { toast(e.message, "err"); }
+}
+
+/**
+ * Export a save as a signed PS3 .PSV.
+ *
+ * File modes come from stat() rather than the directory listing: mcio's
+ * readdir rebuilds mode from a subset of the flags, while the PSV wants the
+ * value stored on the card (this is why the CLI's PSU export re-stats too).
+ */
+function exportPsv(save) {
+  if (!isSave(save)) return;
+  try {
+    const dirStat = vmc.stat(save.path);
+    const files = vmc.list(save.path).filter(f => !f.isDir).map(e => {
+      const st = vmc.stat(save.path + "/" + e.name);
+      return {
+        name: e.name, mode: st.mode, ctime: st.ctime, mtime: st.mtime,
+        data: vmc.readFile(save.path + "/" + e.name)
+      };
+    });
+
+    const icons = save.sys
+      ? { iconName: save.sys.iconName, copyIconName: save.sys.copyIconName,
+          deleteIconName: save.sys.deleteIconName }
+      : {};
+
+    const psv = PSV.buildPs2({
+      dir: { name: dirStat.name, mode: dirStat.mode, ctime: dirStat.ctime,
+             mtime: dirStat.mtime, entryCount: dirStat.size },
+      files, icons
+    });
+
+    download(psv, psvFileName(save.name));
+  } catch (e) {
+    toast("Could not export " + save.name + " — " + e.message, "err");
+  }
+}
+
+/* The PS3 names a PSV after the save folder: the first 12 characters, then
+ * any remaining ones as hex. Matches psv-save-converter. */
+function psvFileName(dirName) {
+  let out = dirName.slice(0, 12);
+  for (const ch of dirName.slice(12))
+    out += ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0");
+  return safeName(out, "save") + ".PSV";
 }
 
 /** Erase a whole save, including any file inside it. */
