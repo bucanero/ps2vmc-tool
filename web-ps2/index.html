@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PS2 Memory Card Manager</title>
+<style>
+:root {
+  --bg: #0e1015;
+  --bg-2: #161a22;
+  --bg-3: #1d222c;
+  --line: #2a3140;
+  --line-2: #3a4356;
+  --fg: #e6e9ef;
+  --fg-dim: #98a2b3;
+  --fg-faint: #6b7688;
+  --accent: #4f8cff;
+  --accent-2: #8b5cf6;
+  --ok: #2ecc71;
+  --warn: #f5a623;
+  --bad: #ef4444;
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 80px; }
+
+header.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+header.top h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+header.top .ver { font: 12px var(--mono); color: var(--fg-faint); }
+.tagline { color: var(--fg-dim); font-size: 13.5px; margin: 0 0 24px; }
+.tagline b { color: var(--fg); font-weight: 600; }
+.tagline a { color: var(--fg-dim); }
+
+/* ---------- boot / drop ---------- */
+#boot { text-align: center; padding: 60px 20px; color: var(--fg-dim); font-size: 14px; }
+#dropzone {
+  border: 1.5px dashed var(--line-2); border-radius: 14px; padding: 44px 24px;
+  text-align: center; background: var(--bg-2);
+  transition: border-color .15s, background .15s;
+}
+#dropzone.over { border-color: var(--accent); background: #16203a; }
+#dropzone h2 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+#dropzone p { margin: 0 0 18px; color: var(--fg-dim); font-size: 13px; }
+#dropzone .formats { font: 11.5px var(--mono); color: var(--fg-faint); margin-top: 16px; }
+
+/* ---------- buttons ---------- */
+button {
+  font: inherit; font-size: 13px; font-weight: 500;
+  color: var(--fg); background: var(--bg-3);
+  border: 1px solid var(--line-2); border-radius: 8px;
+  padding: 7px 13px; cursor: pointer;
+  transition: background .12s, border-color .12s; white-space: nowrap;
+}
+button:hover { background: #262d3a; border-color: #4a5568; }
+button:active { transform: translateY(1px); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { background: #5f97ff; }
+button.danger:hover { background: #3a1d1f; border-color: var(--bad); color: #ffb4b4; }
+button.tiny { padding: 4px 9px; font-size: 12px; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+.btnrow { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+/* ---------- panels ---------- */
+#cardview { display: none; }
+#cardview.on { display: block; }
+.panel {
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px 18px; margin-bottom: 18px;
+}
+.cardhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cardhead .name { font-weight: 600; font-size: 15px; word-break: break-all; }
+.badge {
+  font: 11px var(--mono); text-transform: uppercase; letter-spacing: .04em;
+  padding: 3px 8px; border-radius: 999px;
+  background: var(--bg-3); border: 1px solid var(--line-2); color: var(--fg-dim);
+}
+.badge.dirty { background: #3a2d10; border-color: #6b5010; color: #f5c85a; }
+.spacer { flex: 1 1 auto; }
+
+.stats { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; }
+.stat b { display: block; font: 600 18px/1.2 var(--mono); }
+.stat span { color: var(--fg-faint); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+.stat.used b { color: var(--accent); }
+.stat.free b { color: var(--ok); }
+
+.meter { margin-top: 14px; height: 8px; border-radius: 99px; background: var(--bg-3); overflow: hidden; border: 1px solid var(--line-2); }
+.meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+
+/* ---------- save grid ---------- */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 14px; }
+.save {
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; display: flex; gap: 13px; cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.save:hover { border-color: var(--line-2); background: #191e28; }
+.save canvas.thumb {
+  width: 72px; height: 72px; flex: 0 0 72px; border-radius: 8px;
+  image-rendering: auto; background: #0a0c11; border: 1px solid var(--line);
+}
+.save .noicon {
+  width: 72px; height: 72px; flex: 0 0 72px; border-radius: 8px;
+  background: #0a0c11; border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center; color: var(--fg-faint); font-size: 20px;
+}
+.save .body { min-width: 0; flex: 1; }
+.save .title { font-weight: 600; font-size: 13.5px; line-height: 1.35; }
+.save .title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.save .title span + span { font-weight: 400; color: var(--fg-dim); }
+.save .dir { font: 11px var(--mono); color: var(--fg-faint); margin: 6px 0 8px; word-break: break-all; }
+.save .meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.save .meta .badge { font-size: 10px; padding: 2px 7px; }
+.save .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.save .acts button { padding: 4px 8px; font-size: 11.5px; }
+
+.empty { text-align: center; color: var(--fg-faint); padding: 40px 0; font-size: 14px; }
+
+/* ---------- detail modal ---------- */
+#modal {
+  position: fixed; inset: 0; z-index: 60; display: none;
+  background: rgba(6, 8, 12, .78); backdrop-filter: blur(3px);
+  align-items: center; justify-content: center; padding: 20px;
+}
+#modal.on { display: flex; }
+.sheet {
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 14px;
+  width: min(920px, 100%); max-height: 90vh; overflow: auto;
+  box-shadow: 0 30px 80px rgba(0,0,0,.6);
+}
+.sheet header {
+  display: flex; align-items: center; gap: 12px; padding: 16px 18px;
+  border-bottom: 1px solid var(--line); position: sticky; top: 0;
+  background: var(--bg-2); z-index: 2;
+}
+.sheet header h3 { margin: 0; font-size: 16px; }
+.sheet .cols { display: flex; gap: 18px; padding: 18px; flex-wrap: wrap; }
+.viewer { flex: 0 0 300px; }
+#icon3d {
+  width: 300px; height: 300px; border-radius: 10px; display: block;
+  border: 1px solid var(--line); background: #0a0c11; cursor: grab; touch-action: none;
+}
+#icon3d:active { cursor: grabbing; }
+.viewer .hint { font-size: 11.5px; color: var(--fg-faint); margin-top: 8px; text-align: center; }
+.viewer .iconbar { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }
+.files { flex: 1 1 320px; min-width: 280px; }
+.files h4 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-faint); }
+table.fl { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.fl th {
+  text-align: left; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .06em;
+  color: var(--fg-faint); padding: 4px 8px; border-bottom: 1px solid var(--line);
+}
+table.fl td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+table.fl td.nm { font: 12px var(--mono); word-break: break-all; }
+table.fl td.sz { text-align: right; font: 12px var(--mono); color: var(--fg-dim); white-space: nowrap; }
+table.fl td.ac { text-align: right; white-space: nowrap; }
+table.fl tr:hover td { background: #1a1f29; }
+
+/* ---------- menu / toast ---------- */
+.menuwrap { position: relative; display: inline-block; }
+.menu {
+  position: absolute; z-index: 70; top: calc(100% + 4px); left: 0; min-width: 200px;
+  background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 8px;
+  padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+}
+.menu button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+.menu button:hover { background: #313a49; }
+.menu .lbl { font: 10px var(--mono); color: var(--fg-faint); padding: 6px 10px 2px; text-transform: uppercase; letter-spacing: .06em; }
+.menu .sep { height: 1px; background: var(--line-2); margin: 4px 2px; }
+
+#toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 100; }
+.toast {
+  background: var(--bg-3); border: 1px solid var(--line-2); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 10px 14px; font-size: 13px; max-width: 360px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5); animation: slidein .18s ease-out;
+}
+.toast.err { border-left-color: var(--bad); }
+.toast.ok { border-left-color: var(--ok); }
+@keyframes slidein { from { opacity: 0; transform: translateY(8px); } }
+
+footer { margin-top: 40px; color: var(--fg-faint); font-size: 12px; text-align: center; line-height: 1.8; }
+footer a { color: var(--fg-dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>PS2 Memory Card Manager</h1>
+    <span class="ver">web build &middot; ps2vmc-tool</span>
+  </header>
+  <p class="tagline">
+    Browse, edit and repack PlayStation 2 virtual memory cards, with their real animated 3D save icons.
+    <b>Everything runs locally in your browser</b> &mdash; no upload, no server.
+  </p>
+
+  <div id="boot">Loading the memory card filesystem&hellip;</div>
+
+  <div id="dropzone" style="display:none">
+    <h2>Drop a PS2 memory card image here</h2>
+    <p>or pick one from your computer</p>
+    <div class="btnrow">
+      <button class="primary" id="btn-open">Open card image&hellip;</button>
+    </div>
+    <div class="formats">.vmc &nbsp;.ps2 &nbsp;.bin &nbsp;.mcd &nbsp;.mc2 &nbsp;.card &nbsp;&mdash;&nbsp; 8 MB and up, with or without ECC</div>
+  </div>
+
+  <div id="cardview">
+    <div class="panel">
+      <div class="cardhead">
+        <span class="name" id="card-name">—</span>
+        <span class="badge" id="card-size">8 MB</span>
+        <span class="badge" id="card-ecc">ECC</span>
+        <span class="badge dirty" id="card-dirty" style="display:none">unsaved changes</span>
+        <span class="spacer"></span>
+        <button id="btn-close">Close card</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat used"><b id="st-used">0</b><span>KB used</span></div>
+        <div class="stat free"><b id="st-free">0</b><span>KB free</span></div>
+        <div class="stat"><b id="st-saves">0</b><span>saves</span></div>
+        <div class="stat"><b id="st-page">512</b><span>page bytes</span></div>
+        <div class="stat"><b id="st-block">16</b><span>pages/block</span></div>
+      </div>
+
+      <div class="meter"><i id="meter-fill" style="width:0%"></i></div>
+
+      <div class="toolbar">
+        <button class="primary" id="btn-import">Import save&hellip;</button>
+        <div class="menuwrap"><button id="btn-download">Download card &#9662;</button></div>
+        <button id="btn-mkdir">New folder</button>
+        <button class="danger" id="btn-format">Format card</button>
+      </div>
+    </div>
+
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="grid-empty" style="display:none">This memory card has no saves.</div>
+  </div>
+
+  <footer>
+    The filesystem is <a href="https://github.com/bucanero/ps2vmc-tool" target="_blank" rel="noopener">ps2vmc-tool</a>'s own
+    <code>mcio.c</code> compiled to WebAssembly, so it behaves exactly like the command line tool.<br>
+    Based on ps3mca-tool by jimmikaelkael et al. GPLv3. Your card images never leave this machine.
+  </footer>
+</div>
+
+<!-- save detail -->
+<div id="modal">
+  <div class="sheet">
+    <header>
+      <h3 id="m-title">Save</h3>
+      <span class="badge" id="m-size">—</span>
+      <span class="spacer"></span>
+      <button id="m-close">Close</button>
+    </header>
+    <div class="cols">
+      <div class="viewer">
+        <canvas id="icon3d" width="300" height="300"></canvas>
+        <div class="hint" id="m-hint">drag to rotate</div>
+        <div class="iconbar" id="m-iconbar"></div>
+      </div>
+      <div class="files">
+        <h4>Files in this save</h4>
+        <table class="fl">
+          <thead><tr><th>Name</th><th style="text-align:right">Size</th><th></th></tr></thead>
+          <tbody id="m-files"></tbody>
+        </table>
+        <div class="toolbar">
+          <button class="primary" id="m-inject">Add file&hellip;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<input type="file" id="file-card" style="display:none">
+<input type="file" id="file-save" style="display:none">
+<input type="file" id="file-inject" style="display:none">
+
+<script src="ps2vmc-wasm-binary.js"></script>
+<script src="ps2vmc-wasm.js"></script>
+<script src="ps2vmc.js"></script>
+<script src="ps2icon.js"></script>
+<script src="icon3d.js"></script>
+<script src="hexedit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
