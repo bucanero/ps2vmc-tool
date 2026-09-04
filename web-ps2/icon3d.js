@@ -7,7 +7,8 @@
  *
  * One renderer owns one WebGL context; browsers cap the number of live
  * contexts, so the app keeps a single instance and re-points it at whichever
- * save is selected.
+ * save is selected. createThumbnailer() applies the same trick to the save
+ * grid, drawing every tile through one offscreen context.
  *
  * GPLv3, same as the rest of the repository.
  */
@@ -186,8 +187,25 @@
 
   /* ---------------- renderer ---------------- */
 
-  function create(canvas) {
-    const gl = canvas.getContext("webgl", { alpha: false, antialias: true, depth: true });
+  /**
+   * Build a renderer on `canvas`. Options:
+   *   interactive   attach drag-to-orbit handlers        (default true)
+   *   autoResize    track the canvas's CSS size          (default true)
+   *   clearColor    [r,g,b] to clear to instead of drawing the icon.sys
+   *                 gradient                             (default: gradient)
+   *   preserveDrawingBuffer  keep the buffer readable after the draw, for
+   *                 callers that copy it out             (default false)
+   */
+  function create(canvas, opts) {
+    opts = opts || {};
+    const interactive = opts.interactive !== false;
+    const autoResize = opts.autoResize !== false;
+    const clearColor = opts.clearColor || null;
+
+    const gl = canvas.getContext("webgl", {
+      alpha: false, antialias: true, depth: true,
+      preserveDrawingBuffer: !!opts.preserveDrawingBuffer
+    });
     if (!gl) throw new Error("WebGL is not available in this browser");
 
     const prog = link(gl, VERT, FRAG);
@@ -245,12 +263,14 @@
     };
     const up = () => { state.dragging = false; };
 
-    canvas.addEventListener("mousedown", down);
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-    canvas.addEventListener("touchstart", down, { passive: false });
-    canvas.addEventListener("touchmove", move, { passive: false });
-    canvas.addEventListener("touchend", up);
+    if (interactive) {
+      canvas.addEventListener("mousedown", down);
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+      canvas.addEventListener("touchstart", down, { passive: false });
+      canvas.addEventListener("touchmove", move, { passive: false });
+      canvas.addEventListener("touchend", up);
+    }
 
     function uploadShapes() {
       for (const b of buffers.shapes) gl.deleteBuffer(b);
@@ -310,30 +330,36 @@
       gl.bufferData(gl.ARRAY_BUFFER, q, gl.STATIC_DRAW);
     }
 
-    function draw(now) {
-      raf = requestAnimationFrame(draw);
+    /* Draw one frame at animation time `t`, in seconds. Synchronous, so a
+     * caller that owns the clock (a thumbnail, a test) can drive it directly
+     * instead of going through requestAnimationFrame. */
+    function renderFrame(t) {
       if (!icon) return;
 
-      const w = canvas.clientWidth || 320, h = canvas.clientHeight || 320;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      if (canvas.width !== (w * dpr | 0) || canvas.height !== (h * dpr | 0)) {
-        canvas.width = w * dpr | 0;
-        canvas.height = h * dpr | 0;
+      if (autoResize) {
+        const w = canvas.clientWidth || 320, h = canvas.clientHeight || 320;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        if (canvas.width !== (w * dpr | 0) || canvas.height !== (h * dpr | 0)) {
+          canvas.width = w * dpr | 0;
+          canvas.height = h * dpr | 0;
+        }
       }
       gl.viewport(0, 0, canvas.width, canvas.height);
 
-      if (!t0) t0 = now;
-      const t = state.paused ? 0 : (now - t0) / 1000;
-
-      /* background gradient */
       gl.disable(gl.DEPTH_TEST);
-      gl.useProgram(bgProg);
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffers.bg);
-      gl.enableVertexAttribArray(bgLoc.pos);
-      gl.vertexAttribPointer(bgLoc.pos, 2, gl.FLOAT, false, 20, 0);
-      gl.enableVertexAttribArray(bgLoc.col);
-      gl.vertexAttribPointer(bgLoc.col, 3, gl.FLOAT, false, 20, 8);
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      if (clearColor) {
+        gl.clearColor(clearColor[0], clearColor[1], clearColor[2], 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      } else {
+        /* background gradient */
+        gl.useProgram(bgProg);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.bg);
+        gl.enableVertexAttribArray(bgLoc.pos);
+        gl.vertexAttribPointer(bgLoc.pos, 2, gl.FLOAT, false, 20, 0);
+        gl.enableVertexAttribArray(bgLoc.col);
+        gl.vertexAttribPointer(bgLoc.col, 3, gl.FLOAT, false, 20, 8);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
 
       /* model */
       gl.enable(gl.DEPTH_TEST);
@@ -402,6 +428,12 @@
       gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
     }
 
+    function loop(now) {
+      raf = requestAnimationFrame(loop);
+      if (!t0) t0 = now;
+      renderFrame(state.paused ? 0 : (now - t0) / 1000);
+    }
+
     return {
       state,
 
@@ -423,7 +455,9 @@
         state.autoRotate = true;
       },
 
-      start() { if (!raf) raf = requestAnimationFrame(draw); },
+      start() { if (!raf) raf = requestAnimationFrame(loop); },
+      /** Draw a single frame at time `t` without starting the loop. */
+      renderAt(t) { renderFrame(t || 0); },
       stop() { cancelAnimationFrame(raf); raf = 0; },
       resetView() { state.yaw = 0; state.pitch = 0; state.autoRotate = true; },
       isAnimated() { return plan.animated; },
@@ -441,5 +475,105 @@
     };
   }
 
-  return { create, animationPlan, morphAt };
+  /* ---------------- grid thumbnails ---------------- */
+
+  /**
+   * One offscreen renderer that paints icon thumbnails into ordinary 2D
+   * canvases.
+   *
+   * A save card cannot own a WebGL context of its own: browsers cap how many
+   * are live at once (Chrome force-loses the oldest past roughly 16), and a
+   * well-filled card has over a hundred saves, so most of the grid would go
+   * blank. Instead every tile is drawn through this single context and copied
+   * out with drawImage, which leaves the cards holding cheap 2D canvases.
+   *
+   * `size` is the square pixel size to render at. `background` is the colour
+   * behind the model as [r,g,b] in 0..1; pass null for the save's own
+   * icon.sys gradient.
+   */
+  function createThumbnailer(size, background) {
+    const px = Math.max(32, size | 0) || 144;
+    const cv = document.createElement("canvas");
+    cv.width = px;
+    cv.height = px;
+
+    const r = create(cv, {
+      interactive: false,
+      autoResize: false,
+      preserveDrawingBuffer: true,
+      clearColor: background === null ? null : (background || [0.039, 0.047, 0.067])
+    });
+
+    let loaded = null;      /* key of the icon currently uploaded to the GPU */
+    let raf = 0, t0 = 0, target = null;
+
+    /* Uploading is the expensive part, so skip it when the same icon is
+     * already resident - hovering the tile just drawn is the common case. */
+    function use(icon, sys, key) {
+      if (key === undefined || key === null || key !== loaded) {
+        r.setIcon(icon, sys);
+        loaded = (key === undefined) ? null : key;
+      }
+    }
+
+    function blit(dest) {
+      dest.getContext("2d").drawImage(cv, 0, 0, dest.width, dest.height);
+    }
+
+    function drawStill(dest) {
+      r.state.autoRotate = false;
+      r.state.yaw = 0;
+      r.state.pitch = 0;
+      r.renderAt(0);
+      blit(dest);
+    }
+
+    return {
+      /** Size the tile canvas should use for a 1:1 copy. */
+      pixels: px,
+
+      /** Paint a still, front-facing frame of `icon` into a 2D canvas. */
+      still(dest, icon, sys, key) {
+        use(icon, sys, key);
+        drawStill(dest);
+      },
+
+      /** Animate `icon` into a 2D canvas until stop() is called. */
+      play(dest, icon, sys, key) {
+        this.stop();
+        use(icon, sys, key);
+        r.state.autoRotate = true;
+        r.state.pitch = 0;
+        target = dest;
+        t0 = 0;
+        const step = (now) => {
+          raf = requestAnimationFrame(step);
+          if (!t0) t0 = now;
+          r.renderAt((now - t0) / 1000);
+          blit(target);
+        };
+        raf = requestAnimationFrame(step);
+      },
+
+      /** Stop animating, leaving the still frame back in its tile. */
+      stop() {
+        if (!raf) return;
+        cancelAnimationFrame(raf);
+        raf = 0;
+        if (target) drawStill(target);
+        target = null;
+      },
+
+      /** True while a tile is animating. */
+      playing() { return !!raf; },
+
+      dispose() {
+        this.stop();
+        r.dispose();
+        loaded = null;
+      }
+    };
+  }
+
+  return { create, createThumbnailer, animationPlan, morphAt };
 });

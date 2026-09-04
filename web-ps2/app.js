@@ -11,7 +11,13 @@
 const $ = id => document.getElementById(id);
 
 let vmc = null;          /* PS2VMC api */
-let viewer = null;       /* PS2Icon3D renderer (created lazily) */
+let viewer = null;       /* PS2Icon3D renderer for the detail view (lazy) */
+let thumbs;              /* shared thumbnail renderer; false if no WebGL */
+
+/* Tiles are 72 CSS px (see .save canvas.thumb). */
+const THUMB_PX = Math.round(72 * Math.min(window.devicePixelRatio || 1, 2));
+/* Long enough that sweeping the pointer across the grid uploads nothing. */
+const HOVER_DELAY_MS = 120;
 let state = { fileName: "memcard.vmc", dirty: false, info: null, current: null };
 
 /* ------------------------------------------------------------------ */
@@ -157,10 +163,50 @@ function loadIcon(save, iconName) {
 /* rendering                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The grid's shared 3D thumbnail renderer, or null where WebGL is missing.
+ * One context serves every tile; see createThumbnailer() in icon3d.js.
+ */
+function thumbnailer() {
+  if (thumbs === undefined) {
+    try { thumbs = PS2Icon3D.createThumbnailer(THUMB_PX); }
+    catch (e) { thumbs = false; }
+  }
+  return thumbs || null;
+}
+
+/* Fallback for browsers without WebGL: the flat 128x128 texture, which is the
+ * unwrapped skin rather than the icon as the console draws it. */
 function drawThumb(canvas, texture) {
   const ctx = canvas.getContext("2d");
   canvas.width = 128; canvas.height = 128;
   ctx.putImageData(new ImageData(texture, 128, 128), 0, 0);
+}
+
+/**
+ * Animate a tile while the pointer is over its card.
+ *
+ * The parsed icon is deliberately not retained: geometry for every save on a
+ * 133-save card is around 16 MB, so it is re-read on hover instead and only
+ * the one being looked at is ever resident.
+ */
+function hoverAnimate(card, canvas, save, iconName, key) {
+  let timer = 0;
+
+  card.addEventListener("mouseenter", () => {
+    timer = setTimeout(() => {
+      timer = 0;
+      const t = thumbnailer();
+      const icon = t && loadIcon(save, iconName);
+      if (icon) t.play(canvas, icon, save.sys, key);
+    }, HOVER_DELAY_MS);
+  });
+
+  card.addEventListener("mouseleave", () => {
+    if (timer) { clearTimeout(timer); timer = 0; return; }
+    const t = thumbnailer();
+    if (t) t.stop();
+  });
 }
 
 /** A button inside a save card: never opens the card's detail view. */
@@ -193,6 +239,7 @@ function render() {
   $("st-saves").textContent = roots.length;
 
   const grid = $("grid");
+  if (thumbs) thumbs.stop();      /* the tile being animated is about to go */
   grid.innerHTML = "";
 
   for (const r of roots) {
@@ -202,12 +249,25 @@ function render() {
     card.title = "Open " + save.name + " to browse and edit its files";
     card.addEventListener("click", () => openSave(save));
 
-    const icon = save.iconNames.length ? loadIcon(save, save.iconNames[0]) : null;
-    if (icon && icon.texture) {
+    const iconName = save.iconNames[0];
+    const icon = iconName ? loadIcon(save, iconName) : null;
+    const tn = thumbnailer();
+
+    /* With WebGL every icon is drawable, including the handful that carry no
+     * texture and are drawn from vertex colours alone. Without it, only the
+     * ones that have a texture to show. */
+    if (icon && (tn || icon.texture)) {
       const cv = document.createElement("canvas");
       cv.className = "thumb";
       card.appendChild(cv);
-      drawThumb(cv, icon.texture);
+      if (tn) {
+        cv.width = cv.height = tn.pixels;
+        const key = save.path + "/" + iconName;
+        tn.still(cv, icon, save.sys, key);
+        hoverAnimate(card, cv, save, iconName, key);
+      } else {
+        drawThumb(cv, icon.texture);
+      }
     } else {
       const ph = document.createElement("div");
       ph.className = "noicon";
@@ -271,6 +331,7 @@ function render() {
 
 function openSave(save) {
   state.current = save;
+  if (thumbs) thumbs.stop();
 
   $("m-title").textContent = save.titleLines.join(" — ") || save.name;
   $("m-size").textContent = fmtSize(save.bytes);

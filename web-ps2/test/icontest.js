@@ -230,6 +230,43 @@ async function main() {
   ok("light and ambient values are finite floats", litOk);
   ok("titles decoded for every save", titled === seen.size, titled + "/" + seen.size);
 
+  /* ---------- 5. grid thumbnails ---------- */
+  console.log("\n=== grid thumbnails ===");
+
+  /* The save grid draws every tile through one shared offscreen context, so a
+   * card with a hundred saves does not need a hundred WebGL contexts. The
+   * renderer itself needs a DOM, but what the grid relies on can be checked
+   * here: the entry point exists, and every save yields drawable geometry. */
+  ok("icon3d exposes the shared-context thumbnail renderer",
+     typeof PS2Icon3D.createThumbnailer === "function");
+
+  let tiles = 0, texturelessTiles = 0, undrawable = [];
+  for (const sample of samples) {
+    vmc.openCard(new Uint8Array(fs.readFileSync(sample)));
+    for (const d of vmc.list("/")) {
+      if (!d.isDir) continue;
+      let sys, ico;
+      try { sys = PS2Icon.parseIconSys(vmc.readFile("/" + d.name + "/icon.sys")); }
+      catch (e) { continue; }
+      if (!sys.iconName) continue;
+      try { ico = PS2Icon.parseIco(vmc.readFile("/" + d.name + "/" + sys.iconName)); }
+      catch (e) { continue; }
+
+      tiles++;
+      if (!ico.texture) texturelessTiles++;
+      if (!(ico.vertexCount > 0 && ico.shapes.length > 0))
+        undrawable.push(d.name);
+    }
+  }
+
+  ok("every save's primary icon has drawable geometry (" + tiles + " tiles)",
+     undrawable.length === 0, undrawable.join(", "));
+
+  /* These are the ones the old flat-texture grid could only show as "?": they
+   * have no texture and are drawn from vertex colours alone. */
+  ok("textureless icons are drawable rather than placeholders (" +
+     texturelessTiles + " of " + tiles + ")", texturelessTiles > 0);
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log("\n" + pass + " passed, " + fail + " failed");
   process.exit(fail ? 1 : 0);
