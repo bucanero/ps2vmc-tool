@@ -30,6 +30,7 @@
 #include "util.h"
 #include "ps2icon.h"
 #include "psv_resign.h"
+#include "ps2save.h"
 #include "svpng.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
@@ -56,6 +57,7 @@ enum ps2vmc_cmd {
 	CMD_CROSSLINK,
 	CMD_PSU_IMPORT,
 	CMD_PSV_IMPORT,
+	CMD_SAVE_IMPORT,
 };
 
 
@@ -83,6 +85,9 @@ static void print_usage(int argc, char **argv)
 	printf("\t --file-crosslink, -cl <real mc filepath> <dummy mc filepath>\n");
 	printf("\t --psv-import, -pi <PSV filepath>\n");
 	printf("\t --psu-import, -pu <PSU filepath>\n");
+	printf("\t --cbs-import, -cbs <CBS filepath>\n");
+	printf("\t --max-import, -max <MAX filepath>\n");
+	printf("\t --xps-import, -xps <XPS filepath>\n");
 	printf("\t --psu-export, -px <mc path> <output filepath>\n");
 	printf("\t --psv-export, -pv <mc path> <output filepath>\n");
 	printf("\n");
@@ -796,6 +801,53 @@ static int cmd_import(const char *input)
 	return fd;
 }
 
+/*
+ * Import a third-party save container (.cbs/.max/.xps). The format is detected
+ * from the file rather than the flag, so any of the three switches accepts any
+ * of the three containers.
+ */
+static int cmd_save_import(const char *input)
+{
+	ps2save_t save;
+	uint8_t *buf;
+	size_t len;
+	int r, fmt;
+
+	if (read_buffer(input, &buf, &len) < 0) {
+		fprintf(stderr, "Error: can't open file '%s'\n", input);
+		return -1000;
+	}
+
+	fmt = ps2save_detect(buf, len);
+	if (fmt == PS2SAVE_PSU || fmt == PS2SAVE_PSV) {
+		fprintf(stderr, "Error: '%s' is a %s file, use --%s-import\n", input,
+			ps2save_format_name(fmt), fmt == PS2SAVE_PSU ? "psu" : "psv");
+		free(buf);
+		return PS2SAVE_ERR_FORMAT;
+	}
+
+	printf("Reading file: '%s'...\n", input);
+
+	r = ps2save_parse(buf, len, &save);
+	free(buf);
+
+	if (r < 0) {
+		fprintf(stderr, "Error: can't read '%s' as a PS2 save container (%d)\n", input, r);
+		return r;
+	}
+
+	printf("Writing %s data to: '/%s'...\n", ps2save_format_name(fmt), save.dirname);
+
+	for (int i = 0; i < save.file_count; i++)
+		printf("Adding %s/%-40s | %8u bytes\n", save.dirname,
+			save.files[i].name, save.files[i].size);
+
+	r = ps2save_write(&save);
+	ps2save_free(&save);
+
+	return r;
+}
+
 static int cmd_psu_import(const char *input)
 {
 	int fd, r;
@@ -1017,6 +1069,16 @@ int main(int argc, char **argv)
 			cmd = CMD_PSU_IMPORT;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--cbs-import") || !strcmp(argv[2], "-cbs") ||
+			 !strcmp(argv[2], "--max-import") || !strcmp(argv[2], "-max") ||
+			 !strcmp(argv[2], "--xps-import") || !strcmp(argv[2], "-xps")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_SAVE_IMPORT;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--psv-import") || !strcmp(argv[2], "-pi")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
@@ -1163,6 +1225,13 @@ int main(int argc, char **argv)
 		}
 		else if (cmd == CMD_PSV_IMPORT) {
 			r = cmd_import(cmd_args[0]);
+			if (r == sceMcResNoFormat)
+				fprintf(stderr, "Error: memory card is not formatted!\n");
+			else if (r < 0)
+				fprintf(stderr, "Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
+		}
+		else if (cmd == CMD_SAVE_IMPORT) {
+			r = cmd_save_import(cmd_args[0]);
 			if (r == sceMcResNoFormat)
 				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)

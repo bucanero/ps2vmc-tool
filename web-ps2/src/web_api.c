@@ -21,6 +21,7 @@
 
 #include "mcio.h"
 #include "util.h"
+#include "ps2save.h"
 
 #define PSV_MAGIC       0x50535600
 #define KEEP            EMSCRIPTEN_KEEPALIVE
@@ -470,6 +471,38 @@ KEEP int vmc_psu_import(uint8_t *data, int size)
 	mcio_mcSetStat(psu_entry.name, &entry);
 
 	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Third-party containers: .cbs / .max / .xps                         */
+/* ------------------------------------------------------------------ */
+
+/* What container is this? One of the ps2save_format values. */
+KEEP int vmc_save_detect(uint8_t *p, int size)
+{
+	if (size < 0)
+		return PS2SAVE_UNKNOWN;
+
+	return ps2save_detect(p, (size_t)size);
+}
+
+/* Import a .cbs/.max/.xps save. The format is detected from the data. */
+KEEP int vmc_save_import(uint8_t *p, int size)
+{
+	ps2save_t save;
+	int r;
+
+	if (size <= 0)
+		return PS2SAVE_ERR_TRUNCATED;
+
+	r = ps2save_parse(p, (size_t)size, &save);
+	if (r < 0)
+		return r;
+
+	r = ps2save_write(&save);
+	ps2save_free(&save);
+
+	return r;
 }
 
 /* ------------------------------------------------------------------ */

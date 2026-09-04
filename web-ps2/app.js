@@ -587,14 +587,20 @@ async function importSaveFile(file) {
     bytes = await readFileBytes(file);
   } catch (e) { toast(e.message, "err"); return; }
 
-  const isPsv = bytes.length > 4 && bytes[0] === 0x00 && bytes[1] === 0x56 &&
-                bytes[2] === 0x53 && bytes[3] === 0x50;
+  /* The container is identified from its contents, not its extension: the
+   * same wasm code decides here and in the CLI. */
+  const F = PS2VMC.FORMAT;
+  const fmt = vmc.detect(bytes);
+
   try {
-    if (isPsv) vmc.psvImport(bytes);
-    else vmc.psuImport(bytes);
+    if (fmt === F.PSV) vmc.psvImport(bytes);
+    else if (fmt === F.PSU) vmc.psuImport(bytes);
+    else if (fmt === F.CBS || fmt === F.MAX || fmt === F.XPS) vmc.saveImport(bytes);
+    else throw new Error("unrecognised save format");
+
     markDirty();
     render();
-    toast("Imported " + file.name + " (" + (isPsv ? "PSV" : "PSU") + ")", "ok");
+    toast("Imported " + file.name + " (" + PS2VMC.FORMAT_NAME[fmt] + ")", "ok");
   } catch (e) {
     toast("Could not import " + file.name + " — " + e.message, "err");
   }

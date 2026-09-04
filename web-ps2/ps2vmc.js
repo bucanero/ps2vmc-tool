@@ -37,6 +37,9 @@
     "-100": "not a directory",
     "-101": "not a file",
     "-1000": "out of memory",
+    "-1010": "not a PS2 save container",
+    "-1011": "file is truncated",
+    "-1012": "could not decompress the save",
     "-1001": "short read",
     "-1002": "allocation failed",
     "-1003": "truncated or malformed container",
@@ -53,6 +56,16 @@
     DUPPROHIBIT: 0x0008, FILE: 0x0010, SUBDIR: 0x0020,
     CLOSED: 0x0080, PDAEXEC: 0x0800, PS1: 0x1000,
     HIDDEN: 0x2000, EXISTS: 0x8000
+  };
+
+  /* Save containers the wasm can identify; mirrors enum ps2save_format. */
+  const FORMAT = {
+    UNKNOWN: 0, PSU: 1, PSV: 2, CBS: 3, MAX: 4, XPS: 5
+  };
+
+  const FORMAT_NAME = {
+    0: "unknown", 1: "PSU", 2: "PSV",
+    3: "CodeBreaker", 4: "Action Replay MAX", 5: "Xploder/SharkPort"
   };
 
   class VmcError extends Error {
@@ -88,6 +101,8 @@
       psuExport:  Module.cwrap("vmc_psu_export", "number", ["string", "number"]),
       psuImport:  Module.cwrap("vmc_psu_import", "number", ["number", "number"]),
       psvImport:  Module.cwrap("vmc_psv_import", "number", ["number", "number"]),
+      saveImport: Module.cwrap("vmc_save_import", "number", ["number", "number"]),
+      saveDetect: Module.cwrap("vmc_save_detect", "number", ["number", "number"]),
       sizeofDirent: Module.cwrap("vmc_sizeof_dirent", "number", []),
       offsetofName: Module.cwrap("vmc_offsetof_name", "number", [])
     };
@@ -321,6 +336,29 @@
         }
       },
 
+      /** Which container is this? One of PS2VMC.FORMAT. */
+      detect(bytes) {
+        const ptr = Module._malloc(bytes.length || 1);
+        try {
+          heap().set(bytes, ptr);
+          return c.saveDetect(ptr, bytes.length);
+        } finally {
+          Module._free(ptr);
+        }
+      },
+
+      /** Import a .cbs/.max/.xps save; the format is detected from the data. */
+      saveImport(bytes) {
+        const ptr = Module._malloc(bytes.length);
+        try {
+          heap().set(bytes, ptr);
+          const r = c.saveImport(ptr, bytes.length);
+          if (r < 0) throw new VmcError(r, "importing save");
+        } finally {
+          Module._free(ptr);
+        }
+      },
+
       /* ---- images ---- */
 
       imageRaw() {
@@ -392,5 +430,5 @@
     return create(Module);
   }
 
-  return { load, ATTR, errText, VmcError };
+  return { load, ATTR, FORMAT, FORMAT_NAME, errText, VmcError };
 });

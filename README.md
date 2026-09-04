@@ -11,7 +11,7 @@ PS2VMC Tool is a command-line application for managing PS2 virtual memory cards 
 ## Usage
 
 ```
-PS2VMC-TOOL v1.1.2
+PS2VMC-TOOL v1.3.0
 Copyright (C) 2023 - by Bucanero
 based on ps3mca-tool by jimmikaelkael et al.
 
@@ -25,6 +25,7 @@ Available commands:
 	 --ecc-image, -ecc <output filepath>
 	 --mc-format
 	 --list, -ls <mc path>
+	 --icons-png <mc path>
 	 --extract-file, -x <mc filepath> <output filepath>
 	 --inject-file, -in <input filepath> <mc filepath>
 	 --make-directory, -mkdir <mc path>
@@ -33,6 +34,9 @@ Available commands:
 	 --file-crosslink, -cl <real mc filepath> <dummy mc filepath>
 	 --psv-import, -pi <PSV filepath>
 	 --psu-import, -pu <PSU filepath>
+	 --cbs-import, -cbs <CBS filepath>
+	 --max-import, -max <MAX filepath>
+	 --xps-import, -xps <XPS filepath>
 	 --psu-export, -px <mc path> <output filepath>
 	 --psv-export, -pv <mc path> <output filepath>
 ```

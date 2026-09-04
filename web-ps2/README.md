@@ -37,6 +37,7 @@ backend, just ten static files, all of them plain text.
 | `--psu-export` | *Export ▾ → PSU* on a save card |
 | `--psv-export` | *Export ▾ → PSV* — a signed PS3 save |
 | `--psu-import`, `--psv-import` | *Import save…* (the format is detected from the file) |
+| `--cbs-import`, `--max-import`, `--xps-import` | *Import save…* — CodeBreaker, Action Replay MAX, Xploder/SharkPort |
 | `--mc-image` | *Download card ▾ → Raw, ECC stripped* |
 | `--ecc-image` | *Download card ▾ → With ECC spare* |
 | `--mc-format` | *Format card* |
@@ -115,7 +116,8 @@ stays ASCII.
 ## Rebuilding the WebAssembly module
 
 `ps2vmc-wasm.js` and `ps2vmc-wasm-binary.js` are checked in, so this is only
-needed after changing `src/mcio.c`, `src/util.c` or `web-ps2/src/web_api.c`:
+needed after changing `src/mcio.c`, `src/util.c`, `src/ps2save.c` or
+`web-ps2/src/web_api.c`:
 
 ```bash
 brew install emscripten     # or apt install emscripten
@@ -131,6 +133,7 @@ node web-ps2/test/difftest.js    # wasm vs CLI, 92 checks
 node web-ps2/test/icontest.js    # icon parsing and animation, 25 checks
 node web-ps2/test/hexedit.js     # hex editing on both cards, 38 checks
 node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 103 checks
+node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers, wasm vs CLI, 21 checks
 ```
 
 `difftest.js` runs each operation twice — once through the wasm module, once
@@ -172,6 +175,63 @@ PSU stream and writes a nonsensical `displaySize`. One sample save (976-byte
 The PS1 side of `psv.js` carries its own note: a PS1 PSV stores the save size
 twice, at `0x40` and `0x5C`, and both have to be right or multi-block saves are
 truncated on console. See `web-ps1/README.md`.
+
+## Third-party save containers
+
+*Import save…* also accepts the three container formats cheat devices wrote
+saves in, alongside `.psu` and `.psv`:
+
+| | |
+| --- | --- |
+| `.cbs` | CodeBreaker — zlib deflate under an RC4 keystream |
+| `.max` | Action Replay MAX — LZARI |
+| `.xps` | Xploder / SharkPort — uncompressed |
+
+All three hold the same thing, a save directory and its files, so `src/ps2save.c`
+turns each into one structure and a single writer puts it on the card. That file
+is compiled into both the CLI and the wasm, so the two cannot drift; `.psu` and
+`.psv` keep their existing importers untouched.
+
+The format is decided by looking at the data, never at the file extension — the
+same `ps2save_detect()` runs behind the CLI's three switches and the web page's
+one *Import save…* button, so any switch accepts any of the three.
+
+Two things worth knowing:
+
+- **The readers are stricter than the reference.** Every field is bounds-checked
+  before it is read, because these files come from the internet. The reference
+  reads two variable-length XPS header blocks into a 100-byte stack buffer
+  without checking their length; here they are skipped rather than read.
+- **`.max` carries no timestamps.** The container has none, and the reference
+  takes them from the file on disk — which a browser upload does not have. Those
+  saves are stamped with the current time, the way the card stamps a fresh save.
+  `.cbs` and `.xps` keep the timestamps stored in the container.
+
+`.max` is the subtle one, in two ways.
+
+`unlzari()` stops when its input runs out and reports how many bytes it wrote,
+so a truncated file decompresses "successfully" into a short buffer. Entries are
+bounded by what actually came out rather than by the size the header claims, and
+the buffer is `calloc`ed so a short stream reads as zeros instead of stale heap.
+
+And the header's `compressedSize` cannot be trusted either — it under-reports.
+`samples/BASLUS-20963FF1200.max` claims 17529 for a stream that is really 17533
+bytes, so feeding the decoder only what the header allows starves it: it returns
+168 bytes short and the last file in the save is cut off. Everything after the
+header goes to the decoder instead, which is safe because the stream carries its
+own length in its first word.
+
+The reference converter reads that save with the same 168-byte shortfall and
+gets away with it: the bytes it never wrote come from a fresh `malloc` of 92 KB,
+which the allocator serves as zero pages, and the tail of that particular
+`icon.sys` happens to be zeros (its last non-zero byte is at offset 397 of 964).
+Our output for all three sample containers is byte-identical to the reference's,
+this file included.
+
+`test/savefmt.js` imports every `.cbs`/`.max`/`.xps` in `samples/` twice, once
+through the wasm and once through `./ps2vmc-tool`, and compares the resulting
+files byte for byte. Drop a real save into `samples/` and it is picked up with
+no change to the test.
 
 ## Hex editor
 

@@ -27,8 +27,10 @@ COMMON_SRC =	src/util.c src/aes.c src/sha1.c src/hmac.c src/psv_resign.c
 # PS1 only: the card format, plus SHA-256 for .mcx images
 PS1_SRC	=	src/ps1main.c src/ps1card.c src/sha256.c $(COMMON_SRC)
 
-# PS2 only: the mcio filesystem and the 3D icon decoder
-PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c $(COMMON_SRC)
+# PS2 only: the mcio filesystem, the 3D icon decoder, and the readers for
+# third-party save containers (LZARI for .max, inflate for .cbs)
+PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c src/ps2save.c \
+		src/lzari.c src/miniz_tinfl.c $(COMMON_SRC)
 
 PS1_OBJ	=	$(PS1_SRC:.c=.o)
 PS2_OBJ	=	$(PS2_SRC:.c=.o)

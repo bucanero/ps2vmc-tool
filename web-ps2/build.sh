@@ -7,8 +7,8 @@
 #     apt install emscripten           # Debian/Ubuntu
 #
 # The output (ps2vmc-wasm.js + ps2vmc-wasm.wasm) is checked into the repository,
-# so you only need to run this after changing src/mcio.c, src/util.c or
-# src/web_api.c.
+# so you only need to run this after changing src/mcio.c, src/util.c,
+# src/ps2save.c or src/web_api.c.
 #
 # Note: emscripten's SINGLE_FILE is deliberately NOT used. It embeds the module
 # as a JS string literal of RAW BINARY (not base64), leaving thousands of NUL
@@ -28,6 +28,9 @@ emcc \
 	-I "$ROOT/include" -I "$ROOT" \
 	"$ROOT/src/mcio.c" \
 	"$ROOT/src/util.c" \
+	"$ROOT/src/ps2save.c" \
+	"$ROOT/src/lzari.c" \
+	"$ROOT/src/miniz_tinfl.c" \
 	src/web_api.c \
 	-o "$OUT" \
 	--no-entry \
