@@ -22,7 +22,7 @@ python3 -m http.server 8000
 ```
 
 Then open <http://localhost:8000/web-ps2/>. Any static host works — there is no
-backend, just eight static files, all of them plain text.
+backend, just ten static files, all of them plain text.
 
 ## What it does
 
@@ -41,6 +41,7 @@ backend, just eight static files, all of them plain text.
 | `--ecc-image` | *Download card ▾ → With ECC spare* |
 | `--mc-format` | *Format card* |
 | `--icons-png` | *texture .png* in the icon bar |
+| *(not in the CLI)* | 3D icon on every save card, animated on hover |
 | *(not in the CLI)* | Animated 3D icon viewer, drag to orbit |
 | *(not in the CLI)* | *Hex* — edit any file on the card byte by byte |
 
@@ -63,7 +64,7 @@ ps2vmc.js         JS API over the wasm module (strings, Uint8Arrays, objects)
 ps2icon.js        .ico and icon.sys parsers
 cryptoutil.js     AES-128, SHA-1, SHA-256, HMAC-SHA1, shared by all of the below
 psv.js            PSV and VMP signing, PSV construction (shared with PS1)
-icon3d.js         WebGL icon renderer + animation logic
+icon3d.js         WebGL icon renderer, animation logic, grid thumbnails
 hexedit.js        the hex editor modal (shared with the PS1 page)
 ps2vmc-wasm.js         generated: emscripten glue (~13 KB)
 ps2vmc-wasm-binary.js  generated: the compiled module, base64 (~65 KB)
@@ -71,6 +72,26 @@ src/web_api.c          the C bridge: mcio wrappers, PSU/PSV, image dumps
 build.sh               rebuilds both generated files
 test/                  differential tests against the native CLI
 ```
+
+### What runs in the wasm, and what runs in JavaScript
+
+One rule decides where a piece of work lives: **anything that touches the mcio
+filesystem is C compiled to wasm; container layout and crypto stay in
+JavaScript.**
+
+That is why PSV *import* is a wasm entry point (`vmc_psv_import`) while PSV
+*export* is `psv.js`. Importing has to walk the FAT and allocate clusters, so it
+has to be mcio. Exporting only reads file data mcio has already handed back,
+then lays out a header and signs it — no card filesystem involved.
+
+Keeping the second half in JavaScript is what stops the crypto multiplying. The
+PS1 page has no wasm at all, so `cryptoutil.js` and `psv.js` have to exist as
+JavaScript whatever this page does; routing PS2 signing through the wasm would
+add a third implementation rather than remove the second, and would mean
+refactoring `psv_resign()` and `cmd_psv_export()` off `FILE *` first, since the
+module is built with `-s FILESYSTEM=0`. What keeps the C and the JS honest
+instead is `test/psv.js`, which runs the real `--psv-export` and asserts the
+CLI's bytes and ours match exactly, signature included.
 
 ### Why the module is base64 and not a .wasm file
 
@@ -107,7 +128,7 @@ All four suites need the native tools built first (`make`):
 
 ```bash
 node web-ps2/test/difftest.js    # wasm vs CLI, 92 checks
-node web-ps2/test/icontest.js    # icon parsing and animation, 20 checks
+node web-ps2/test/icontest.js    # icon parsing and animation, 23 checks
 node web-ps2/test/hexedit.js     # hex editing on both cards, 38 checks
 node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 103 checks
 ```
@@ -126,8 +147,8 @@ anywhere else still fails.
 
 `icontest.js` parses all 246 icons on the sample cards, verifies the texture
 decoder against the CLI's own `--icons-png` output byte for byte (both the
-uncompressed and RLE encodings), and checks the animation logic on all 60
-animated icons.
+uncompressed and RLE encodings), checks the animation logic on all 60 animated
+icons, and confirms every save's primary icon has geometry the grid can draw.
 
 ## PSV export
 
@@ -198,10 +219,46 @@ Two things are worth knowing:
   loop runs for `frame_length / (60 × anim_speed)` seconds, clamped to
   0.3–10 s. Shapes are interpolated linearly.
 
+### One context for the whole grid
+
+Each save card shows its real model, not the flat 128×128 texture — which is
+the unwrapped skin, and looks nothing like the icon the console draws. Tiles
+get the save's own `icon.sys` background gradient as well, so a card in the
+grid looks like the same card in the detail view. Pass a colour as the second
+argument to `createThumbnailer()` to clear to a flat background instead.
+
+A canvas per card will not work: `getContext("webgl")` per tile means one live
+context per save, and browsers cap how many exist at once (Chrome force-loses
+the oldest past roughly 16), so most of a well-filled card would go blank. The
+sample `card32mb.bin` has 133 saves. Instead `createThumbnailer()` keeps a
+single offscreen context, renders each icon into it and copies the result out
+with `drawImage`, leaving the cards holding cheap 2D canvases.
+
+The cost is close to nothing, because the grid already parsed each icon in full
+just to reach its texture: building the 133-save grid takes 98 ms with 3D tiles
+against 94 ms with flat ones. 43,164 triangles across the whole card is a
+rounding error for a GPU.
+
+Two WebGL details matter when one context draws many images. The colour buffer
+is cleared explicitly every frame rather than trusting the gradient quad to
+cover it, and the model's vertex attribute arrays are disabled before their
+buffers are deleted for the next icon — leaving them dangling makes the very
+next draw invalid, and Firefox drops it, which silently cost every tile but the
+first its background.
+
+Tiles are stills, and animate only while the pointer is over the card. That is
+what keeps the memory flat: holding every parsed icon on that card at once is
+about 16 MB of vertex data, so the geometry is dropped after the still frame
+and re-read on hover, leaving only the one being looked at resident. Hovering
+starts after 120 ms, so sweeping the pointer across the grid uploads nothing,
+and leaving restores the still frame. Static icons rotate on hover too.
+
 Some icons carry no texture at all (7 of 246 here): the file ends right after
 the animation block and the model is drawn from vertex colours alone. The
 parser reports those as textureless, and the renderer falls back to a plain
-white texture so the vertex colours show through.
+white texture so the vertex colours show through. Drawing the grid in 3D means
+these appear there too — the flat-texture grid had nothing to show for them and
+fell back to a `?` placeholder.
 
 ## Two bugs this work turned up in the C tool
 
