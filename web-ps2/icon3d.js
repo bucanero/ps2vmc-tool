@@ -273,6 +273,16 @@
     }
 
     function uploadShapes() {
+      /* Deleting a buffer that an enabled attribute array still points at
+       * leaves that array referencing nothing, and a draw in that state is
+       * invalid. Firefox enforces it and drops the call. The next draw after
+       * an icon change is the background quad, so every thumbnail but the
+       * first came out on a bare clear colour, while the model - drawn after
+       * its arrays are bound again - still appeared. Clear the arrays before
+       * touching the buffers; the model draw re-enables them every frame. */
+      for (const l of [loc.posA, loc.posB, loc.normal, loc.uv, loc.color])
+        if (l >= 0) gl.disableVertexAttribArray(l);
+
       for (const b of buffers.shapes) gl.deleteBuffer(b);
       buffers.shapes = icon.shapes.map(s => {
         const b = gl.createBuffer();
@@ -346,11 +356,17 @@
       }
       gl.viewport(0, 0, canvas.width, canvas.height);
 
+      /* Clear first, always. The gradient quad covers the frame, but a quad is
+       * not an erase: whatever it fails to overwrite survives, and one buffer
+       * draws every tile in the grid back to back, so a thumbnail could come
+       * out carrying the icons drawn before it. */
       gl.disable(gl.DEPTH_TEST);
-      if (clearColor) {
-        gl.clearColor(clearColor[0], clearColor[1], clearColor[2], 1);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      } else {
+      gl.clearColor(clearColor ? clearColor[0] : 0,
+                    clearColor ? clearColor[1] : 0,
+                    clearColor ? clearColor[2] : 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      if (!clearColor) {
         /* background gradient */
         gl.useProgram(bgProg);
         gl.bindBuffer(gl.ARRAY_BUFFER, buffers.bg);
@@ -487,9 +503,9 @@
    * blank. Instead every tile is drawn through this single context and copied
    * out with drawImage, which leaves the cards holding cheap 2D canvases.
    *
-   * `size` is the square pixel size to render at. `background` is the colour
-   * behind the model as [r,g,b] in 0..1; pass null for the save's own
-   * icon.sys gradient.
+   * `size` is the square pixel size to render at. Tiles get the save's own
+   * icon.sys gradient behind the model, the same as the detail view; pass
+   * `background` as [r,g,b] in 0..1 to clear to a flat colour instead.
    */
   function createThumbnailer(size, background) {
     const px = Math.max(32, size | 0) || 144;
@@ -501,7 +517,7 @@
       interactive: false,
       autoResize: false,
       preserveDrawingBuffer: true,
-      clearColor: background === null ? null : (background || [0.039, 0.047, 0.067])
+      clearColor: background || null
     });
 
     let loaded = null;      /* key of the icon currently uploaded to the GPU */
@@ -517,7 +533,12 @@
     }
 
     function blit(dest) {
-      dest.getContext("2d").drawImage(cv, 0, 0, dest.width, dest.height);
+      const ctx = dest.getContext("2d");
+      /* drawImage composites. The source is opaque so it should cover on its
+       * own, but a tile is drawn over many times while it animates and one
+       * stray alpha channel would pile the frames up. */
+      ctx.clearRect(0, 0, dest.width, dest.height);
+      ctx.drawImage(cv, 0, 0, dest.width, dest.height);
     }
 
     function drawStill(dest) {
