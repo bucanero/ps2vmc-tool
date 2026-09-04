@@ -304,16 +304,19 @@ KEEP uint8_t *vmc_psu_export(const char *path, int *out_len)
 	memcpy(entry.name, dirent.name, sizeof(entry.name));
 	entry.mode = dirent.stat.mode;
 	entry.length = dirent.stat.size;
-	buf_put(&b, &entry, sizeof(entry));
+	if (!buf_put(&b, &entry, sizeof(entry)))
+		goto oom;
 
 	/* "." and ".." */
 	memset(entry.name, 0, sizeof(entry.name));
 	strncpy(entry.name, ".", sizeof(entry.name));
 	entry.length = 0;
-	buf_put(&b, &entry, sizeof(entry));
+	if (!buf_put(&b, &entry, sizeof(entry)))
+		goto oom;
 
 	strncpy(entry.name, "..", sizeof(entry.name));
-	buf_put(&b, &entry, sizeof(entry));
+	if (!buf_put(&b, &entry, sizeof(entry)))
+		goto oom;
 
 	do {
 		r = mcio_mcDread(dd, &dirent);
@@ -332,7 +335,8 @@ KEEP uint8_t *vmc_psu_export(const char *path, int *out_len)
 			memcpy(entry.name, dirent.name, sizeof(entry.name));
 			entry.mode = dirent.stat.mode;
 			entry.length = dirent.stat.size;
-			buf_put(&b, &entry, sizeof(entry));
+			if (!buf_put(&b, &entry, sizeof(entry)))
+				goto oom;
 
 			fd = mcio_mcOpen(filepath, sceMcFileAttrReadable | sceMcFileAttrFile);
 			if (fd < 0) {
@@ -362,11 +366,15 @@ KEEP uint8_t *vmc_psu_export(const char *path, int *out_len)
 				return NULL;
 			}
 
-			buf_put(&b, p, dirent.stat.size);
+			if (!buf_put(&b, p, dirent.stat.size)) {
+				free(p);
+				goto oom;
+			}
 			free(p);
 
 			pad = (1024 - (dirent.stat.size % 1024)) % 1024;
-			buf_fill(&b, 0xFF, pad);
+			if (!buf_fill(&b, 0xFF, pad))
+				goto oom;
 		}
 	} while (foundfile);
 
@@ -374,6 +382,14 @@ KEEP uint8_t *vmc_psu_export(const char *path, int *out_len)
 
 	*out_len = (int)b.len;
 	return b.p;
+
+	/* A failed grow would otherwise be silent: the buffer keeps whatever it had
+	 * and the caller writes out a truncated .psu that looks perfectly valid. */
+oom:
+	mcio_mcDclose(dd);
+	free(b.p);
+	*out_len = -1000;
+	return NULL;
 }
 
 /* ------------------------------------------------------------------ */

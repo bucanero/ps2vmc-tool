@@ -113,10 +113,18 @@ async function main() {
        before.length + " vs " + blocks * 8192);
 
     /* edit bytes in the first and last block, and inside the title field */
+    const titleBefore = PS1.slots[slot].title;
+    const NEWTITLE = "HEXEDIT!";
     const edited = before.slice();
     edited[0x100] ^= 0xff;
     edited[edited.length - 1] = 0x5a;
-    for (let i = 0; i < 8; i++) edited[4 + i * 2] = 0x41 + i;   /* title area */
+
+    /* The title is Shift-JIS terminated by a NUL on an even offset, so write
+     * every byte of it - leaving the odd ones as they were would make the
+     * decoded string depend on whatever the save already held. */
+    for (let i = 0; i < NEWTITLE.length; i++) edited[4 + i] = NEWTITLE.charCodeAt(i);
+    edited[4 + NEWTITLE.length] = 0;
+    edited[5 + NEWTITLE.length] = 0;
 
     ok("writeSaveBytes accepts a same-size buffer", PS1.writeSaveBytes(slot, edited) === true);
 
@@ -126,7 +134,8 @@ async function main() {
        [...after].filter((v, i) => v !== edited[i]).length + " bytes differ");
 
     ok("derived data refreshed after the edit (title re-decoded)",
-       PS1.slots[slot].title !== "" || true);
+       PS1.slots[slot].title === NEWTITLE && titleBefore !== NEWTITLE,
+       "was " + JSON.stringify(titleBefore) + ", now " + JSON.stringify(PS1.slots[slot].title));
 
     /* the edit must survive a card export + reopen */
     const exported = PS1.exportCard(PS1.CARD.RAW);

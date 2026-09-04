@@ -128,7 +128,7 @@ All four suites need the native tools built first (`make`):
 
 ```bash
 node web-ps2/test/difftest.js    # wasm vs CLI, 92 checks
-node web-ps2/test/icontest.js    # icon parsing and animation, 23 checks
+node web-ps2/test/icontest.js    # icon parsing and animation, 25 checks
 node web-ps2/test/hexedit.js     # hex editing on both cards, 38 checks
 node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 103 checks
 ```

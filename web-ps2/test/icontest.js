@@ -96,7 +96,8 @@ async function main() {
         }
         if (bad) badGeometry++;
 
-        catalogue.push({ card: path.basename(sample), dir: d.name, name: nm, ico, sys });
+        catalogue.push({ card: path.basename(sample), dir: d.name, name: nm, ico, sys,
+                         raw: vmc.readFile("/" + d.name + "/" + nm) });
       }
     }
   }
@@ -116,6 +117,30 @@ async function main() {
      untextured.length + " of " + icons + ")",
      untextured.every(c => c.ico.texture === null && c.ico.vertexCount > 0));
   ok("all geometry is finite triangles", badGeometry === 0, badGeometry + " bad");
+  /* No sample icon has a truncated compressed texture, so build one. A short
+   * RLE stream must report textureless, the same as the uncompressed branch
+   * already does - otherwise the tail of the image stays at the cleared value
+   * and a part-black tile passes for real texture data. */
+  const rle = catalogue.filter(c => c.ico.textureType > 7 && c.ico.texture)
+                       .sort((a, b) => b.raw.length - a.raw.length)[0];
+  if (rle) {
+    /* Trim only the tail: the texture is the last block, so a small cut
+     * shortens the RLE stream while leaving the header and geometry intact.
+     * The largest icon is used so the cuts cannot reach back into vertices. */
+    const cuts = [];
+    for (const n of [2, 16, 64]) {
+      try { cuts.push(PS2Icon.parseIco(rle.raw.subarray(0, rle.raw.length - n))); }
+      catch (e) { /* cut reached the geometry; not a useful case */ }
+    }
+    ok("a truncated RLE texture reports textureless, not a part-decoded image (" +
+       rle.dir + "/" + rle.name + ", " + cuts.length + " cuts)",
+       cuts.length > 0 && cuts.every(c => c.texture === null),
+       cuts.map(c => c.texture ? "array " + c.texture.length : "null").join(", "));
+    ok("truncating the texture leaves the model intact",
+       cuts.length > 0 && cuts.every(c => c.vertexCount === rle.ico.vertexCount &&
+                                          c.shapeCount === rle.ico.shapeCount));
+  }
+
   ok("sample set covers both texture encodings",
      Object.keys(byType).some(t => +t <= 7) && Object.keys(byType).some(t => +t > 7));
   ok("sample set contains animated icons", animated > 0, animated + " found");

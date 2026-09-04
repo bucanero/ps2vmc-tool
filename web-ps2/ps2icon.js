@@ -152,7 +152,13 @@
       }
       o += 2;
     }
-    return out;
+
+    /* A short decode means the texture block is truncated or missing entirely,
+     * which is the same case the uncompressed branch rejects above. Report it
+     * as textureless rather than handing back a half-decoded image: the
+     * renderer falls back to vertex colours, and the grid would otherwise show
+     * a black tile that looks like real texture data. */
+    return px === out.length ? out : null;
   }
 
   /**
