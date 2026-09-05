@@ -32,10 +32,11 @@
 #include "psv_resign.h"
 #include "ps2save.h"
 #include "ps2blank.h"
-#include "svpng.h"
+#include "ps2png.h"
+#include "ps2render.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
-#define PROGRAM_VER     "1.3.0"
+#define PROGRAM_VER     "2.0.0"
 
 #define PSV_MAGIC       0x50535600
 
@@ -51,6 +52,7 @@ enum ps2vmc_cmd {
 	CMD_XPS_EXPORT,
 	CMD_CBS_EXPORT,
 	CMD_MAX_EXPORT,
+	CMD_ICONS_RENDER,
 	CMD_ICONS_PNG,
 	CMD_EXTRACT,
 	CMD_MCFORMAT,
@@ -81,6 +83,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --mc-create, -new  (write a new empty card to <VMC filepath>)\n");
 	printf("\t --list, -ls <mc path>\n");
 	printf("\t --icons-png <mc path>\n");
+	printf("\t --3d-icons, -3d <mc path>  (software-rendered 3D icons)\n");
 	printf("\t --extract-file, -x <mc filepath> <output filepath>\n");
 	printf("\t --inject-file, -in <input filepath> <mc filepath>\n");
 	printf("\t --make-directory, -mkdir <mc path>\n");
@@ -308,7 +311,7 @@ static int cmd_export(const char* path, const char* output)
 	mcio_mcDclose(dd);
 	fclose(fh);
 
-	printf("Save succesfully exported to %s.\n", output);
+	printf("Save successfully exported to %s.\n", output);
 
 	return dd;
 }
@@ -497,7 +500,7 @@ static int cmd_psv_export(const char* path, const char* output)
 	if (!psv_resign(output))
 		return -1005;
 
-	printf("Save succesfully exported to %s.\n", output);
+	printf("Save successfully exported to %s.\n", output);
 
 	return 0;
 }
@@ -547,11 +550,94 @@ static int cmd_export_icons_png(const char* path)
 			return -1003;
 		}
 
-		svpng(fh, 128, 128, output, 1);
+		r = png_write_rgba(fh, output, 128, 128);
 		fclose(fh);
 		free(output);
 
-		printf("Icon succesfully exported to %s\n", filePath);
+		if (r < 0) {
+			fprintf(stderr, "Error: can't write '%s'\n", filePath);
+			return -1003;
+		}
+
+		printf("Icon successfully exported to %s\n", filePath);
+	}
+
+	return 0;
+}
+
+/*
+ * Render the three icons of a save the way the web page draws them, rather
+ * than dumping the flat texture as --icons-png does.
+ *
+ * The background is left transparent so the PNG composites anywhere;
+ * ps2icon_render() can also paint the icon.sys gradient.
+ */
+#define RENDER_SIZE   256
+#define RENDER_SUPER  4
+
+static int cmd_render_icons(const char* path)
+{
+	int r, fd;
+	ps2_IconSys_t iconsys;
+	char filePath[256];
+	char* fnames[4] = { iconsys.IconName, iconsys.copyIconName, iconsys.deleteIconName, NULL };
+
+	if (path[0] == '/') path++;
+	printf("Rendering '%s' icons at %dx%d...\n", path, RENDER_SIZE, RENDER_SIZE);
+
+	snprintf(filePath, sizeof(filePath), "%s/icon.sys", path);
+	fd = mcio_mcOpen(filePath, sceMcFileAttrReadable | sceMcFileAttrFile);
+	if (fd < 0)
+		return fd;
+
+	r = mcio_mcRead(fd, &iconsys, sizeof(ps2_IconSys_t));
+	if (r != (int)sizeof(ps2_IconSys_t)) {
+		mcio_mcClose(fd);
+		return -1001;
+	}
+	mcio_mcClose(fd);
+
+	for (int i = 0; i < 3; i++) {
+		ps2icon_t icon;
+		uint8_t *pixels;
+		FILE *fh;
+
+		if (ps2icon_load(path, fnames[i], &icon) < 0) {
+			fprintf(stderr, "Warning: can't read icon '%s', skipping\n", fnames[i]);
+			continue;
+		}
+
+		r = ps2icon_render(&icon, &iconsys, RENDER_SIZE, RENDER_SUPER,
+				   PS2RENDER_BG_TRANSPARENT, &pixels);
+		ps2icon_free(&icon);
+
+		if (r < 0) {
+			fprintf(stderr, "Warning: can't render icon '%s', skipping\n", fnames[i]);
+			continue;
+		}
+
+		fnames[3] = strrchr(fnames[i], '.');
+		if (fnames[3])
+			*fnames[3] = 0;
+
+		snprintf(filePath, sizeof(filePath), "%.12s_%s_3d.png", path, fnames[i]);
+
+		fh = fopen(filePath, "wb");
+		if (!fh) {
+			free(pixels);
+			return -1003;
+		}
+
+		r = png_write_rgba(fh, pixels, RENDER_SIZE, RENDER_SIZE);
+		fclose(fh);
+		free(pixels);
+
+		if (r < 0) {
+			fprintf(stderr, "Error: can't write '%s'\n", filePath);
+			return -1003;
+		}
+
+		printf("Icon successfully rendered to %s\n", filePath);
 	}
 
 	return 0;
@@ -568,7 +654,7 @@ static int cmd_mcformat(void)
 	if (r < 0)
 		return r;
 
-	printf("Memory card succesfully formated.\n");
+	printf("Memory card successfully formatted.\n");
 
 	return 0;
 }
@@ -1082,6 +1168,14 @@ int main(int argc, char **argv)
 			cmd = CMD_LIST;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--3d-icons") || !strcmp(argv[2], "-3d")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_ICONS_RENDER;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--icons-png")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
@@ -1234,7 +1328,7 @@ int main(int argc, char **argv)
 
 	r = mcio_init(data, dsize);
 	/*if (r == sceMcResNoFormat)
-		fprintf(stderr, "Error: memory card not formated...\n");*/
+		fprintf(stderr, "Error: memory card not formatted...\n");*/
 	if ((r != sceMcResNoFormat) && (r < 0)) {
 		fprintf(stderr, "Error: no PS2 Memory Card detected... (%d)\n", r);
 	}
@@ -1265,6 +1359,11 @@ int main(int argc, char **argv)
 			r = cmd_export_icons_png(cmd_args[0]);
 			if (r < 0)
 				fprintf(stderr, "Error: can't export icons... (%d)\n", r);
+		}
+		else if (cmd == CMD_ICONS_RENDER) {
+			r = cmd_render_icons(cmd_args[0]);
+			if (r < 0)
+				fprintf(stderr, "Error: can't render icons... (%d)\n", r);
 		}
 		else if (cmd == CMD_PSU_EXPORT) {
 			r = cmd_export(cmd_args[0], cmd_args[1]);

@@ -94,10 +94,14 @@ uint32_t read_le_uint32(const uint8_t *buf)
 {
 	register uint32_t val;
 
+	/* Cast before shifting: a uint8_t promotes to int, so buf[3] << 24 is a
+	 * signed overflow for any byte >= 128 - undefined behaviour, which is what
+	 * UBSan reports here. Every real compiler produces the wanted value, but
+	 * the cast makes it defined. */
 	val = buf[0];
-	val |= (buf[1] << 8);
-	val |= (buf[2] << 16);
-	val |= (buf[3] << 24);
+	val |= ((uint32_t)buf[1] << 8);
+	val |= ((uint32_t)buf[2] << 16);
+	val |= ((uint32_t)buf[3] << 24);
 
 	return val;
 }

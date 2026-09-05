@@ -26,10 +26,10 @@
 
 #include "ps1card.h"
 #include "util.h"
-#include "svpng.h"
+#include "ps2png.h"
 
 #define PROGRAM_NAME    "PS1VMC-TOOL"
-#define PROGRAM_VER     "1.1.0"
+#define PROGRAM_VER     "2.0.0"
 
 #define PSV_MAGIC       0x50535600
 
@@ -131,7 +131,7 @@ static int cmd_icons(const char* slot)
 {
 	uint8_t *icon;
 	char filename[256];
-	int id;
+	int id, r;
 	ps1mcData_t *mcdata = getMemoryCardData();
 
 	if (parse_slot(slot, &id) < 0)
@@ -150,9 +150,20 @@ static int cmd_icons(const char* slot)
 		printf("Exporting '%s' icon %d: %s ...\n", mcdata[id].saveName, i, filename);
 
 		FILE* fp = fopen(filename, "wb");
-		svpng(fp, 16, 16, icon, 1);
+		if (!fp) {
+			fprintf(stderr, "Error: can't create '%s'\n", filename);
+			free(icon);
+			return -1003;
+		}
+
+		r = png_write_rgba(fp, icon, 16, 16);
 		fclose(fp);
 		free(icon);
+
+		if (r < 0) {
+			fprintf(stderr, "Error: can't write '%s'\n", filename);
+			return -1003;
+		}
 	}
 
 	return 0;
@@ -253,7 +264,7 @@ static int cmd_mcformat(void)
 
 	formatMemoryCard();
 
-	printf("Memory card succesfully formated.\n");
+	printf("Memory card successfully formatted.\n");
 	return 0;
 }
 
@@ -629,7 +640,8 @@ int main(int argc, char **argv)
 			if (r == 99999)
 				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
-				fprintf(stderr, "Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
+				fprintf(stderr, "Error: can't export icons for slot '%s'... (%d)\n",
+					cmd_args[0], r);
 		}
 		else if (cmd == CMD_REMOVE) {
 			r = cmd_remove(cmd_args[0]);

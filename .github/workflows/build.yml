@@ -87,6 +87,33 @@ jobs:
           echo "  imported $c"
         done
 
+        # the 3D icon renderer: a real PNG with a transparent background
+        ./ps2vmc-tool samples/ps2card.vmc --3d-icons /BESLES-50325 | grep -q "rendered"
+        test -s BESLES-50325_PAYNE_3d.png
+
+        # A command that takes a path must reach the usage text without one,
+        # not cmd_args[0]. main() runs "if (argc-- < 3)" before dispatching, so
+        # a one-argument command guards with "argc < 3".
+        for c in --3d-icons --icons-png --list; do
+          out=$(./ps2vmc-tool samples/ps2card.vmc $c 2>&1 || true)
+          case "$out" in
+            *"Available commands"*) ;;
+            *) echo "::error::'$c' with no argument did not print the usage"; exit 1;;
+          esac
+        done
+        echo "  commands with no argument show the usage"
+
+        # An unwritable destination has to be reported, not announced as a
+        # success. (This reaches the fopen check; the writer's return value
+        # guards short writes and allocation failures, which cannot be provoked
+        # portably from a shell.)
+        mkdir -p noperm && chmod 500 noperm
+        ( cd noperm && ../ps2vmc-tool ../samples/ps2card.vmc --3d-icons /BESLES-50325 \
+            >/dev/null 2>&1 ) && { echo "::error::render into a read-only dir reported success"; \
+            chmod 700 noperm; exit 1; }
+        chmod 700 noperm && rm -rf noperm
+        echo "  a failed PNG write is reported, not ignored"
+
         # the PS1 tool, including a card of its own
         ./ps1vmc-tool samples/epsxe000.mcr --mc-info | grep -q "Data slots: 15"
         ./ps1vmc-tool samples/epsxe000.mcr --list | grep -q "SLUS-01251"
@@ -249,7 +276,7 @@ jobs:
                imp.mcr ext.mcr del.mcr soft.mcr slot.mcr frag.mcr \
                ABCDEFGHIJKLMNOPQR.raw ABCDEFGHIJKLMNOPQRSTUVWXYZ long.mcr sub.mcr
 
-        rm -f smoke.psu smoke.xps smoke.cbs smoke.max new.vmc round.vmc one.vmc fmt.vmc new.mcr
+        rm -f smoke.psu smoke.xps smoke.cbs smoke.max new.vmc round.vmc one.vmc fmt.vmc new.mcr *_3d.png
         echo "smoke tests passed"
 
     - name: Get short SHA
