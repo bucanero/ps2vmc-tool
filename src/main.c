@@ -36,7 +36,7 @@
 #include "ps2render.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
-#define PROGRAM_VER     "1.3.0"
+#define PROGRAM_VER     "2.0.0"
 
 #define PSV_MAGIC       0x50535600
 

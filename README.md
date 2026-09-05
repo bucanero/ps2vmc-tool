@@ -11,7 +11,7 @@ PS2VMC Tool is a command-line application for managing PS2 virtual memory cards 
 ## Usage
 
 ```
-PS2VMC-TOOL v1.3.0
+PS2VMC-TOOL v2.0.0
 Copyright (C) 2023 - by Bucanero
 based on ps3mca-tool by jimmikaelkael et al.
 
@@ -51,7 +51,7 @@ PS1VMC Tool is a command-line application for managing PS1 virtual memory cards 
 ## Usage
 
 ```
-PS1VMC-TOOL v1.1.0
+PS1VMC-TOOL v2.0.0
 Copyright (C) 2024 - by Bucanero
 based on MemcardRex by ShendoXT
 

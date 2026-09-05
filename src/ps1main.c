@@ -29,7 +29,7 @@
 #include "ps2png.h"
 
 #define PROGRAM_NAME    "PS1VMC-TOOL"
-#define PROGRAM_VER     "1.1.0"
+#define PROGRAM_VER     "2.0.0"
 
 #define PSV_MAGIC       0x50535600
 
