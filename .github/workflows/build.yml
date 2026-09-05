@@ -93,6 +93,56 @@ jobs:
         ./ps1vmc-tool new.mcr --mc-create
         ./ps1vmc-tool new.mcr --mc-info | grep -q "Data slots: 15"
 
+        # A raw save has no header, so its name comes from the file name - and
+        # that name is the region, product code and identifier. Importing the
+        # same save under three shapes of path has to give the same result;
+        # only looking for "/" used to put a Windows path into the name field.
+        ./ps1vmc-tool samples/epsxe000.mcr --extract-save 0 BASLUS-0125100000-00
+        mkdir -p ps1sub
+        cp BASLUS-0125100000-00 ps1sub/
+        cp BASLUS-0125100000-00 'C:\saves\BASLUS-0125100000-00'
+        cp BASLUS-0125100000-00 BASLUS-0125100000-00.raw
+        for f in "BASLUS-0125100000-00" "ps1sub/BASLUS-0125100000-00" \
+                 'C:\saves\BASLUS-0125100000-00' "BASLUS-0125100000-00.raw"; do
+          ./ps1vmc-tool imp.mcr --mc-create >/dev/null
+          ./ps1vmc-tool imp.mcr --inject-save "$f" >/dev/null
+          ./ps1vmc-tool imp.mcr --list | grep -q "SLUS-01251" || {
+            echo "::error::importing '$f' did not set the product code"
+            ./ps1vmc-tool imp.mcr --list; exit 1; }
+        done
+        echo "  raw import keeps its name across path shapes"
+
+        # A 20-character name hides a bad extension, because the copy into the
+        # 20-byte name field truncates it anyway. A short one does not.
+        cp BASLUS-0125100000-00 SHORTNAME.raw
+        ./ps1vmc-tool ext.mcr --mc-create >/dev/null
+        ./ps1vmc-tool ext.mcr --inject-save SHORTNAME.raw >/dev/null
+        ./ps1vmc-tool ext.mcr --list | grep -q "SHORTNAME.raw" && {
+          echo "::error::the .raw extension leaked into the save name"
+          ./ps1vmc-tool ext.mcr --list; exit 1; }
+        ./ps1vmc-tool ext.mcr --list | grep -q "SHORTNAME" || {
+          echo "::error::the save name was lost"; exit 1; }
+        echo "  a .raw extension is stripped from the name"
+
+        # A deleted save keeps its name and data and must not read as a link.
+        cp samples/epsxe000.mcr del.mcr
+        python3 - <<'PYEOF'
+        d = bytearray(open("del.mcr", "rb").read())
+        d[128] = 0xA1                      # slot 0: initial, deleted
+        x = 0
+        for i in range(128, 255):
+            x ^= d[i]
+        d[255] = x                         # directory frame checksum
+        open("del.mcr", "wb").write(bytes(d))
+        PYEOF
+        ./ps1vmc-tool del.mcr --list | grep -q "<deleted>" || {
+          echo "::error::a deleted save is not reported as deleted"
+          ./ps1vmc-tool del.mcr --list; exit 1; }
+        echo "  deleted saves are reported as deleted"
+
+        rm -rf ps1sub 'C:\saves\BASLUS-0125100000-00' BASLUS-0125100000-00 \
+               BASLUS-0125100000-00.raw SHORTNAME.raw imp.mcr ext.mcr del.mcr
+
         rm -f smoke.psu smoke.xps smoke.cbs smoke.max new.vmc round.vmc one.vmc fmt.vmc new.mcr
         echo "smoke tests passed"
 

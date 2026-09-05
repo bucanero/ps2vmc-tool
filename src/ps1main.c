@@ -211,6 +211,27 @@ static int cmd_mcformat(void)
 	return 0;
 }
 
+/*
+ * What a slot holds. Everything that was not an initial save used to print as
+ * "<link>", which hid two states a user cares about: a deleted save still
+ * holding its name and data, and a slot whose header byte is not a value the
+ * format defines. Both look like ordinary links otherwise, and a card full of
+ * deleted saves reads as a card full of link blocks.
+ */
+static const char *slot_type_name(uint8_t type)
+{
+	switch (type) {
+	case PS1BLOCK_INITIAL:            return "<save>";
+	case PS1BLOCK_MIDDLELINK:
+	case PS1BLOCK_ENDLINK:            return "<link>";
+	case PS1BLOCK_DELETED_INITIAL:    return "<deleted>";
+	case PS1BLOCK_DELETED_MIDDLELINK:
+	case PS1BLOCK_DELETED_ENDLINK:    return "<del-link>";
+	case PS1BLOCK_CORRUPTED:          return "<corrupt>";
+	default:                          return "<?>";
+	}
+}
+
 static int cmd_list(void)
 {
 	ps1mcData_t* mcdata = getMemoryCardData();
@@ -218,13 +239,13 @@ static int cmd_list(void)
 	if (!mcdata)
 		return -1;
 
-	printf("Slot | ---------- Filename ----------- |  Type  |   Size   | Prod. Code | Region\n");
+	printf("Slot | ---------- Filename ----------- |    Type    |   Size   | Prod. Code | Region\n");
     for (int i = 0; i < PS1CARD_MAX_SLOTS; i++)
 	{
 		if (mcdata[i].saveType == PS1BLOCK_FORMATTED)
 			continue;
 
-		printf(" %2d  | %-32s| %s | ", i, mcdata[i].saveName, (mcdata[i].saveType == PS1BLOCK_INITIAL) ? "<save>" : "<link>");
+		printf(" %2d  | %-32s| %-10s | ", i, mcdata[i].saveName, slot_type_name(mcdata[i].saveType));
 		printf("%8d | ", mcdata[i].saveSize);
 		printf("%-10s | %c%c", mcdata[i].saveProdCode, mcdata[i].saveRegion & 0xFF, mcdata[i].saveRegion >> 8);
 		printf("\n");

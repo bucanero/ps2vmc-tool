@@ -854,6 +854,56 @@ int saveSingleSave(const char* fileName, int slotNumber, int singleSaveType)
 }
 
 //Import single save to the Memory Card
+//Case-insensitive suffix test, without depending on strcasecmp
+static bool ends_with_ci(const char* s, const char* suffix)
+{
+    size_t sl = strlen(s), fl = strlen(suffix);
+
+    if (sl <= fl)
+        return false;
+
+    for (size_t i = 0; i < fl; i++)
+        if (tolower((unsigned char) s[sl - fl + i]) != tolower((unsigned char) suffix[i]))
+            return false;
+
+    return true;
+}
+
+//A raw single save carries no header, so the file name is the only place its
+//name can come from - and that name is the directory frame's region, product
+//code and identifier, not decoration. Two things have to be stripped off it:
+//
+//  - the directory. Looking only for '/' left Windows paths untouched, since
+//    they separate with '\\', so the whole path went into the name field and
+//    the product code came out of the directory name.
+//  - a ".raw"/".ps1" extension an extractor may have added. Only those two:
+//    a PS1 identifier may legitimately contain a dot, so any other name is
+//    taken as it stands.
+static void get_save_name_from_path(const char* path, char* out, size_t outsz)
+{
+    static const char* ext[] = { ".raw", ".ps1" };
+    const char* name = path;
+    const char* p;
+    size_t len;
+
+    for (p = path; *p; p++)
+        if (*p == '/' || *p == '\\')
+            name = p + 1;
+
+    strncpy(out, name, outsz - 1);
+    out[outsz - 1] = 0;
+
+    for (size_t i = 0; i < sizeof(ext) / sizeof(ext[0]); i++)
+    {
+        if (ends_with_ci(out, ext[i]))
+        {
+            len = strlen(out) - strlen(ext[i]);
+            out[len] = 0;
+            return;
+        }
+    }
+}
+
 int openSingleSave(const char* fileName, int* requiredSlots)
 {
     uint8_t* inputData;
@@ -887,12 +937,12 @@ int openSingleSave(const char* fileName, int* requiredSlots)
         finalData_Length = inputData_Length + PS1CARD_HEADER_SIZE;
         finalData = calloc(1, finalData_Length);
 
-        const char* singleSaveName = strrchr(fileName, '/');
-        singleSaveName = singleSaveName ? singleSaveName + 1 : fileName;
+        char saveName[21];
+        get_save_name_from_path(fileName, saveName, sizeof(saveName));
 
         //Recreate save header
         finalData[0] = 0x51;        //Q
-        strncpy((char*) &finalData[10], singleSaveName, 20);
+        strncpy((char*) &finalData[10], saveName, 20);
 
         //Copy save data
         memcpy(&finalData[PS1CARD_HEADER_SIZE], inputData, inputData_Length);
