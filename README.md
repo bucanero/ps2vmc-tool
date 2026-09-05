@@ -37,6 +37,7 @@ Available commands:
 	 --psu-export, -psu <mc path> <output filepath>
 	 --psv-export, -psv <mc path> <output filepath>
 	 --xps-export, -xps <mc path> <output filepath>
+	 --cbs-export, -cbs <mc path> <output filepath>
 ```
 
 ---
@@ -85,6 +86,16 @@ This builds both tools. `make ps1` and `make ps2` build just one. The two
 programs are independent and link only what they use — the PS1 tool contains
 no PS2 filesystem code, and the PS2 tool contains no PS1 card code — sharing
 only `util.c`, `aes.c` and the signing files.
+
+The one external dependency is **zlib**, and only the PS2 tool needs it: a
+CodeBreaker `.cbs` body is a deflate stream, read on import and written on
+export. It comes with the SDK on macOS, with `zlib1g-dev` on Debian and Ubuntu,
+and as `mingw-w64-<arch>-zlib` under MSYS2. To force the static archive, as the
+Windows builds do so the released `.exe` needs no `zlib1.dll`:
+
+```
+make PS2_LIBS=-l:libz.a
+```
 
 ### Save signing
 

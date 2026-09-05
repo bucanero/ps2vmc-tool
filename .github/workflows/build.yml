@@ -16,19 +16,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    # zlib is the only dependency: the PS2 tool deflates and inflates .cbs
+    # bodies. The runner image already carries it, but say so explicitly so a
+    # future image that drops it fails here rather than at the link step.
     - name: Install Ubuntu requirements
       if: matrix.os == 'ubuntu-latest'
       run: |
-        echo "No requirements"
-        #sudo apt-get update
-        #sudo apt-get -y install autoconf automake bison flex gcc libelf-dev make texinfo libncurses5-dev patch python subversion wget zlib1g-dev libtool-bin python-dev bzip2 libgmp3-dev pkg-config
+        sudo apt-get update
+        sudo apt-get -y install zlib1g-dev
     
+    # macOS gets zlib from the SDK, so there is nothing to install.
     - name: Install macOS requirements
       if: matrix.os == 'macos-latest'
       run: |
         echo "No requirements"
-        #brew update
-        #brew install autoconf automake openssl libelf ncurses zlib gmp wget pkg-config
 
     - name: Runs all the stages in the shell
       run: |
@@ -65,11 +66,16 @@ jobs:
         ./ps2vmc-tool new.vmc --import smoke.psu | grep -q "PAYNE.ICO"
         ./ps2vmc-tool new.vmc --list /BESLES-50325 | grep -q "PAYNE.ICO"
 
-        # the same for the .xps we write ourselves
-        ./ps2vmc-tool samples/ps2card.vmc --xps-export /BESLES-50325 smoke.xps
-        ./ps2vmc-tool xps.vmc --mc-create
-        ./ps2vmc-tool xps.vmc --import smoke.xps | grep -q "PAYNE.ICO"
-        ./ps2vmc-tool xps.vmc --list /BESLES-50325 | grep -q "PAYNE.ICO"
+        # the same for the two containers we write ourselves. Byte-identity
+        # with the original is checked by web-ps2/test/savefmt.js; here it is
+        # enough that what we write comes back as the save that went in.
+        for fmt in xps cbs; do
+          ./ps2vmc-tool samples/ps2card.vmc --$fmt-export /BESLES-50325 smoke.$fmt
+          ./ps2vmc-tool round.vmc --mc-create
+          ./ps2vmc-tool round.vmc --import smoke.$fmt | grep -q "PAYNE.ICO"
+          ./ps2vmc-tool round.vmc --list /BESLES-50325 | grep -q "PAYNE.ICO"
+          echo "  round-tripped .$fmt"
+        done
 
         # every third-party container, each onto its own blank card so the
         # ones holding the same save cannot collide
@@ -87,7 +93,7 @@ jobs:
         ./ps1vmc-tool new.mcr --mc-create
         ./ps1vmc-tool new.mcr --mc-info | grep -q "Data slots: 15"
 
-        rm -f smoke.psu smoke.xps new.vmc xps.vmc one.vmc fmt.vmc new.mcr
+        rm -f smoke.psu smoke.xps smoke.cbs new.vmc round.vmc one.vmc fmt.vmc new.mcr
         echo "smoke tests passed"
 
     - name: Get short SHA

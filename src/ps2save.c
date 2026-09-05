@@ -20,16 +20,23 @@
  * GNU General Public License for more details.
  */
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+#include <zlib.h>
+
 #include "ps2save.h"
 #include "lzari.h"
-#include "miniz.h"
 
 #define CBS_MAGIC       "CFU\0"
+
+/* A word every .cbs reader ignores - psv-save-converter and mymcplusplus both
+ * parse it and never look at it again. The CodeBreaker file here holds this,
+ * so that is what gets written back. */
+#define CBS_UNK1        0x1F40
 #define MAX_MAGIC       "Ps2PowerSave"
 #define XPS_MAGIC       "SharkPortSave\0\0\0"
 #define PSU_ENTRY_SIZE  512
@@ -40,6 +47,11 @@
 
 /* A save that claims more than this is not a save. */
 #define SANE_FILE_SIZE  (16 * 1024 * 1024)
+
+/* And a whole save cannot exceed this once inflated. A .cbs states its own
+ * decompressed size, but a hostile one can state anything, so the inflater
+ * stops here instead of growing its buffer until the allocator gives up. */
+#define SANE_SAVE_SIZE  (64 * 1024 * 1024)
 
 typedef struct {
 	char magic[4];
@@ -263,31 +275,123 @@ static void cbs_crypt(uint8_t *buf, size_t len)
 	}
 }
 
+/*
+ * Inflate a zlib stream whose real size is not known: the header states one,
+ * but real writers get it wrong often enough that it is treated as a hint for
+ * the first allocation and nothing more. Returns a malloc'd buffer, or NULL.
+ */
+static uint8_t *inflate_heap(const uint8_t *src, size_t src_len, size_t hint,
+                             size_t *out_len)
+{
+	z_stream zs;
+	uint8_t *buf, *bigger;
+	size_t cap;
+	int r;
+
+	*out_len = 0;
+
+	if (!src_len || src_len > SANE_SAVE_SIZE)
+		return NULL;
+
+	cap = (hint > 0 && hint <= SANE_SAVE_SIZE) ? hint : 64 * 1024;
+	if (cap < 64 * 1024)
+		cap = 64 * 1024;
+
+	buf = malloc(cap);
+	if (!buf)
+		return NULL;
+
+	memset(&zs, 0, sizeof(zs));
+	if (inflateInit(&zs) != Z_OK) {
+		free(buf);
+		return NULL;
+	}
+
+	zs.next_in = (Bytef *)src;
+	zs.avail_in = (uInt)src_len;
+	zs.next_out = buf;
+	zs.avail_out = (uInt)cap;
+
+	for (;;) {
+		r = inflate(&zs, Z_NO_FLUSH);
+
+		if (r == Z_STREAM_END)
+			break;
+
+		/* Z_BUF_ERROR here means no progress is possible, which for a
+		 * complete input can only be a truncated stream. */
+		if (r != Z_OK)
+			goto fail;
+
+		/* Z_OK with room to spare means it wants input it will never get. */
+		if (zs.avail_out)
+			goto fail;
+
+		if (cap >= SANE_SAVE_SIZE)
+			goto fail;
+
+		bigger = realloc(buf, cap * 2);
+		if (!bigger)
+			goto fail;
+
+		buf = bigger;
+		zs.next_out = buf + cap;
+		zs.avail_out = (uInt)cap;
+		cap *= 2;
+	}
+
+	*out_len = zs.total_out;
+	inflateEnd(&zs);
+	return buf;
+
+fail:
+	inflateEnd(&zs);
+	free(buf);
+	return NULL;
+}
+
+/*
+ * The smallest .cbs header a reader can work with: everything up to `title`,
+ * which is where the last field read here (`mode`) ends. mymcplusplus draws
+ * the same line 32 bytes further along, at the first byte of the title.
+ */
+#define CBS_HEADER_MIN  offsetof(cbs_header_t, title)
+
 static int parse_cbs(const uint8_t *buf, size_t len, ps2save_t *out)
 {
 	cbs_header_t header;
 	uint8_t *body = NULL, *plain = NULL;
 	size_t body_len, plain_len = 0, off;
+	uint32_t hlen;
 	int count = 0, i, r;
 
-	if (len <= sizeof(cbs_header_t))
+	if (len <= CBS_HEADER_MIN)
 		return PS2SAVE_ERR_TRUNCATED;
 
-	memcpy(&header, buf, sizeof(header));
-	body_len = len - sizeof(cbs_header_t);
+	/* dataOffset is the header's own length, so the body starts there rather
+	 * than at sizeof(cbs_header_t). Every real file puts the two at the same
+	 * place, but the field is what says so - the same lesson the .xps
+	 * descriptors taught. */
+	memcpy(&hlen, buf + offsetof(cbs_header_t, dataOffset), sizeof(hlen));
+
+	if (hlen < CBS_HEADER_MIN || hlen >= len)
+		return PS2SAVE_ERR_TRUNCATED;
+
+	memset(&header, 0, sizeof(header));
+	memcpy(&header, buf, hlen < sizeof(header) ? hlen : sizeof(header));
+	body_len = len - hlen;
 
 	/* The stream is decrypted in place, so work on a copy of the input. */
 	body = malloc(body_len);
 	if (!body)
 		return PS2SAVE_ERR_MEMORY;
 
-	memcpy(body, buf + sizeof(cbs_header_t), body_len);
+	memcpy(body, buf + hlen, body_len);
 	cbs_crypt(body, body_len);
 
 	/* Some writers put a wrong compressedSize in the header, so the whole
 	 * remainder is handed to the inflater rather than header.compressedSize. */
-	plain = tinfl_decompress_mem_to_heap(body, body_len, &plain_len,
-	                                     TINFL_FLAG_PARSE_ZLIB_HEADER);
+	plain = inflate_heap(body, body_len, header.decompressedSize, &plain_len);
 	free(body);
 
 	if (!plain)
@@ -927,6 +1031,111 @@ int ps2save_build_xps(const ps2save_t *save, uint8_t **out, size_t *out_len)
 
 	*out = buf;
 	*out_len = o;
+	return 0;
+}
+
+/*
+ * A .cbs is a fixed header followed by one deflate stream, RC4'd with the
+ * table above, holding every file back to back behind its own entry.
+ */
+int ps2save_build_cbs(const ps2save_t *save, uint8_t **out, size_t *out_len)
+{
+	char line1[80], line2[80], sjis[80], title[160];
+	cbs_header_t header;
+	cbs_entry_t e;
+	uint8_t *plain, *buf;
+	size_t plain_len = 0, cap, o = 0;
+	uLongf comp_len;
+	int i, r;
+
+	if (!save || !out || !out_len || save->file_count <= 0)
+		return PS2SAVE_ERR_FORMAT;
+
+	*out = NULL;
+	*out_len = 0;
+
+	/* The two icon.sys title lines go in as one string, joined by a space:
+	 * the CodeBreaker file here reads "KAIDO2 System Data" for a title whose
+	 * lines are "KAIDO2" and "System Data". (An .xps gets no separator - that
+	 * is PS2SaveConverter's convention, not this one.) */
+	save_title(save, line1, sizeof(line1), line2, sizeof(line2), sjis, sizeof(sjis));
+	snprintf(title, sizeof(title), "%s%s%s", line1,
+		 (line1[0] && line2[0]) ? " " : "", line2);
+
+	for (i = 0; i < save->file_count; i++)
+		plain_len += sizeof(cbs_entry_t) + save->files[i].size;
+
+	if (plain_len > SANE_SAVE_SIZE)
+		return PS2SAVE_ERR_FORMAT;
+
+	plain = malloc(plain_len);
+	if (!plain)
+		return PS2SAVE_ERR_MEMORY;
+
+	for (i = 0; i < save->file_count; i++) {
+		const ps2save_file_t *f = &save->files[i];
+
+		memset(&e, 0, sizeof(e));
+		e.created = f->created;
+		e.modified = f->modified;
+		e.length = f->size;
+		e.mode = f->mode;
+		strncpy(e.name, f->name, sizeof(e.name) - 1);
+
+		memcpy(plain + o, &e, sizeof(e));
+		o += sizeof(e);
+		memcpy(plain + o, f->data, f->size);
+		o += f->size;
+	}
+
+	/* Compressed straight into place behind the header, so the body never
+	 * needs a second buffer. compressBound covers the worst case, which is
+	 * slightly larger than the input. */
+	cap = sizeof(cbs_header_t) + compressBound((uLong)plain_len);
+
+	buf = calloc(1, cap);
+	if (!buf) {
+		free(plain);
+		return PS2SAVE_ERR_MEMORY;
+	}
+
+	comp_len = (uLongf)(cap - sizeof(cbs_header_t));
+
+	/* Level 9: the CodeBreaker file here opens 0x78 0xDA, which is what
+	 * best-compression writes, and matching it keeps our output in family. */
+	r = compress2(buf + sizeof(cbs_header_t), &comp_len, plain,
+		      (uLong)plain_len, Z_BEST_COMPRESSION);
+	free(plain);
+
+	if (r != Z_OK) {
+		free(buf);
+		return PS2SAVE_ERR_DECOMPRESS;
+	}
+
+	cbs_crypt(buf + sizeof(cbs_header_t), comp_len);
+
+	memset(&header, 0, sizeof(header));
+	memcpy(header.magic, CBS_MAGIC, sizeof(header.magic));
+	header.unk1 = CBS_UNK1;
+	header.dataOffset = sizeof(cbs_header_t);
+	header.decompressedSize = (uint32_t)plain_len;
+
+	/* Writers disagree about what compressedSize counts: the CodeBreaker file
+	 * here stores the whole file's length, though the name says otherwise.
+	 * Readers cope either way - mymcplusplus accepts both explicitly and ours
+	 * ignores the field - so this follows the real file. */
+	header.compressedSize = (uint32_t)(sizeof(cbs_header_t) + comp_len);
+
+	strncpy(header.name, save->dirname, sizeof(header.name) - 1);
+	header.created = save->created;
+	header.modified = save->modified;
+	header.mode = save->mode;
+	strncpy(header.title, title, sizeof(header.title) - 1);
+
+	memcpy(buf, &header, sizeof(header));
+
+	*out = buf;
+	*out_len = sizeof(cbs_header_t) + comp_len;
 	return 0;
 }
 

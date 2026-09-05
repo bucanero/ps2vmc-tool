@@ -314,7 +314,8 @@ function render() {
       { lbl: "Export save as" },
       { text: "PSU  (uLaunchELF / EMS)", fn: () => exportPsu(save) },
       { text: "PSV  (PS3, signed)", fn: () => exportPsv(save) },
-      { text: "XPS  (Xploder / SharkPort)", fn: () => exportXps(save) }
+      { text: "XPS  (Xploder / SharkPort)", fn: () => exportContainer(save, "xps") },
+      { text: "CBS  (CodeBreaker)", fn: () => exportContainer(save, "cbs") }
     ])));
     acts.appendChild(mkSaveBtn("Delete", "danger", () => deleteSave(save)));
     body.appendChild(acts);
@@ -710,16 +711,17 @@ function exportPsv(save) {
 }
 
 /**
- * Export a save as an Xploder/SharkPort .xps.
+ * Export a save as an Xploder/SharkPort .xps or a CodeBreaker .cbs.
  *
  * Built by the same C the CLI uses, so the two produce identical files. There
- * is no .cbs writer (that container needs a deflate compressor) and no .max
- * one (its header under-reports its own sizes).
+ * is no .max writer: that header under-reports its own sizes.
  */
-function exportXps(save) {
+function exportContainer(save, ext) {
   if (!isSave(save)) return;
   try {
-    download(vmc.xpsExport(save.path), safeName(save.name, "save") + ".xps");
+    const bytes = ext === "cbs" ? vmc.cbsExport(save.path)
+                                : vmc.xpsExport(save.path);
+    download(bytes, safeName(save.name, "save") + "." + ext);
   } catch (e) {
     toast("Could not export " + save.name + " — " + e.message, "err");
   }

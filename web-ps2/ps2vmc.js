@@ -104,6 +104,7 @@
       psvImport:  Module.cwrap("vmc_psv_import", "number", ["number", "number"]),
       saveImport: Module.cwrap("vmc_save_import", "number", ["number", "number"]),
       xpsExport:  Module.cwrap("vmc_xps_export", "number", ["string", "number"]),
+      cbsExport:  Module.cwrap("vmc_cbs_export", "number", ["string", "number"]),
       saveDetect: Module.cwrap("vmc_save_detect", "number", ["number", "number"]),
       saveDirName: Module.cwrap("vmc_save_dirname", "string", ["number", "number"]),
       blankCard:  Module.cwrap("vmc_blank_card", "number", ["number"]),
@@ -336,6 +337,15 @@
       xpsExport(path) {
         const lp = scratchPtr(4);
         const ptr = c.xpsExport(path, lp);
+        const len = view().getInt32(lp, true);
+        if (!ptr) throw new VmcError(len, "exporting " + path);
+        return takeBuffer(ptr, len);
+      },
+
+      /** Export a save as a CodeBreaker .cbs. */
+      cbsExport(path) {
+        const lp = scratchPtr(4);
+        const ptr = c.cbsExport(path, lp);
         const len = view().getInt32(lp, true);
         if (!ptr) throw new VmcError(len, "exporting " + path);
         return takeBuffer(ptr, len);

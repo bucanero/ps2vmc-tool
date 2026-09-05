@@ -35,15 +35,16 @@ jobs:
         run: echo "C:\msys64\usr\bin\" >> $GITHUB_PATH
         shell: pwsh
 
+      # zlib is a real dependency now: .cbs bodies are deflate-compressed.
       - name: Install MinGW requirements
         run: |
-          echo "$GITHUB_WORKSPACE"
-          #pacman -S --noconfirm ${{ matrix.package }}-zlib-devel
-          # build the project
+          pacman -S --noconfirm --needed ${{ matrix.package }}-zlib
 
+      # -l:libz.a picks the static archive over the import library, so the
+      # released .exe does not need zlib1.dll beside it.
       - name: Build binaries
         run: |
-          make
+          make PS2_LIBS=-l:libz.a
 
       # The architecture is asserted, not just printed: the MINGW32 leg used to
       # produce x86-64 binaries under a 32-bit name and nothing noticed.
@@ -54,6 +55,17 @@ jobs:
             file "$f" | grep -q "PE32+ executable" && file "$f" | grep -q "x86-64" || {
               echo "::error::$f is not a 64-bit PE: $(file -b "$f")"; exit 1; }
           done
+
+      # An artifact that needs a DLL we do not ship is broken for whoever
+      # downloads it, and nothing else here would notice.
+      - name: Check zlib is linked statically
+        run: |
+          for f in ps2vmc-tool.exe ps1vmc-tool.exe; do
+            if objdump -p "$f" | grep -i "DLL Name" | grep -qi "zlib"; then
+              echo "::error::$f depends on a zlib DLL"; exit 1
+            fi
+          done
+          echo "no zlib DLL dependency"
 
       - name: Get short SHA
         run: echo "sha_name=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
@@ -80,13 +92,14 @@ jobs:
       - name: Install i686 mingw cross toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-i686
+          sudo apt-get install -y gcc-mingw-w64-i686 libz-mingw-w64-dev
 
       # EXE is set explicitly: the Makefile only appends .exe when $(OS) says
-      # Windows_NT, which it does not on the Linux runner.
+      # Windows_NT, which it does not on the Linux runner. -l:libz.a picks the
+      # static archive over the import library, so no zlib1.dll is needed.
       - name: Build binaries
         run: |
-          make CC=${TC}-gcc EXE=.exe
+          make CC=${TC}-gcc EXE=.exe PS2_LIBS=-l:libz.a
 
       # "PE32 executable" matches only 32-bit: a 64-bit one reads "PE32+".
       - name: Check the binaries are 32-bit x86
@@ -96,6 +109,15 @@ jobs:
             file "$f" | grep -q "PE32 executable" && file "$f" | grep -q "80386" || {
               echo "::error::$f is not a 32-bit x86 PE: $(file -b "$f")"; exit 1; }
           done
+
+      - name: Check zlib is linked statically
+        run: |
+          for f in ps2vmc-tool.exe ps1vmc-tool.exe; do
+            if ${TC}-objdump -p "$f" | grep -i "DLL Name" | grep -qi "zlib"; then
+              echo "::error::$f depends on a zlib DLL"; exit 1
+            fi
+          done
+          echo "no zlib DLL dependency"
 
       - name: Get short SHA
         run: echo "sha_name=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV

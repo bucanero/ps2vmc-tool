@@ -161,7 +161,7 @@ node web-ps2/test/difftest.js    # wasm vs CLI, 102 checks
 node web-ps2/test/icontest.js    # icon parsing and animation, 25 checks
 node web-ps2/test/hexedit.js     # hex editing on both cards, 44 checks
 node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 104 checks
-node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers and the XPS writer, 38 checks
+node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers, XPS and CBS writers, 45 checks
 ```
 
 `difftest.js` runs each operation twice — once through the wasm module, once
@@ -258,13 +258,11 @@ which the allocator serves as zero pages, and the tail of that particular
 Our output for all three sample containers is byte-identical to the reference's,
 this file included.
 
-### Writing .xps
+### Writing .xps and .cbs
 
-*Export ▾* offers `.XPS` alongside `.PSU` and `.PSV`. Only that one container is
-written: `.cbs` would need a deflate compressor, which the decompress-only miniz
-here does not provide, and `.max` is not worth writing — its header under-reports
-both of its sizes, so a file we produced would be as awkward to read back as the
-ones in the wild.
+*Export ▾* offers `.XPS` and `.CBS` alongside `.PSU` and `.PSV`. `.max` is not
+written — its header under-reports both of its sizes, so a file we produced
+would be as awkward to read back as the ones in the wild.
 
 The two description strings a `.xps` carries are free-form: one real sample holds
 its authoring tool's name, another holds the save's title. Ours get the two title
@@ -277,6 +275,33 @@ Exporting the save that `samples/myth-makers-super-kart-gp.22840.xps` came from
 reproduces that file's directory mode, size word, per-file modes and all four
 files byte for byte. The two description strings differ, and account exactly for
 the 8-byte difference in total size.
+
+### Writing .cbs
+
+A `.cbs` is a 296-byte header followed by one deflate stream, RC4'd with the
+fixed table above, holding each file behind its own 64-byte entry. zlib does
+both halves of the compression, which is why it is a build dependency.
+
+Reading `samples/tokyo-xtreme-racer-drift-2.14091.cbs` onto a card and writing
+it straight back out **reproduces the original file byte for byte** — all 15038
+of them. Header, entry layout, deflate stream and the RC4 keystream over it all
+have to agree for that to happen. Two independent zlib builds produce it: the
+system one the CLI links, and the 1.3.2 the WebAssembly module carries.
+
+Getting there settled two details the format documentation does not cover:
+
+* **The title is one line, joined with a space.** `icon.sys` holds two title
+  lines; the real file reads `KAIDO2 System Data` for lines `KAIDO2` and
+  `System Data`. An `.xps` gets no separator — PS2SaveConverter writes
+  `FF12 01001:25:27` for its two — so the two containers differ here.
+* **`compressedSize` counts the whole file**, not the body, in the file we have.
+  The name says otherwise and readers cope either way: mymcplusplus accepts both
+  explicitly, and ours ignores the field. We follow the real file.
+
+`dataOffset` is the header's own length rather than a constant, the same lesson
+the `.xps` descriptors taught. Every real file puts it at 296, but the reader
+takes the body from wherever the field points; `savefmt.js` moves it both ways
+and checks the same save comes out.
 
 ### The closing checksum
 
@@ -334,9 +359,10 @@ is the missing piece if a `.max` writer is ever added.
 `test/savefmt.js` imports every `.cbs`/`.max`/`.xps` in `samples/` twice, once
 through the wasm and once through `./ps2vmc-tool`, and compares the resulting
 files byte for byte. Drop a real save into `samples/` and it is picked up with
-no change to the test. It also exports every save on the sample card as `.xps`,
-checks the wasm and the CLI emit identical bytes, and reads each one back to
-confirm the files survive the round trip.
+no change to the test. It also exports every save on the sample card as both
+`.xps` and `.cbs`, checks the wasm and the CLI emit identical bytes, and reads
+each one back to confirm the files survive the round trip — plus the stronger
+check that rewriting a real `.cbs` reproduces it exactly.
 
 ## Hex editor
 

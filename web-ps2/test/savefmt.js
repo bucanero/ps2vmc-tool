@@ -324,6 +324,119 @@ async function main() {
        same && !err, err || "file lists differ");
   }
 
+  /* ---------- 3c. CBS export ---------- */
+  console.log("\n=== CBS export ===");
+
+  vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+
+  let cbsDone = 0, cbsMatched = 0, cbsRound = 0;
+  const cbsProblems = [];
+
+  for (const name of saves) {
+    const original = vmc.list("/" + name).filter(e => !e.isDir && !isDot(e.name))
+      .map(e => ({ name: e.name, data: Buffer.from(vmc.readFile("/" + name + "/" + e.name)) }));
+
+    let cbs;
+    try { cbs = vmc.cbsExport("/" + name); } catch (e) {
+      cbsProblems.push(name + ": export threw " + e.message); continue;
+    }
+    cbsDone++;
+
+    const cliOut = path.join(tmp, name.replace(/\W/g, "_") + ".cbs");
+    cli(srcCard, ["--cbs-export", "/" + name, cliOut]);
+    const d = cmpBytes(cbs, new Uint8Array(fs.readFileSync(cliOut)));
+    if (d) cbsProblems.push(name + ": CLI export differs, " + d);
+    else cbsMatched++;
+
+    vmc.openCard(blankCard("cbsrt-" + name.replace(/\W/g, "_")));
+    try { vmc.saveImport(cbs); } catch (e) {
+      cbsProblems.push(name + ": re-import threw " + e.message);
+      vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+      continue;
+    }
+
+    const back = vmc.list("/" + name).filter(e => !e.isDir && !isDot(e.name))
+      .map(e => ({ name: e.name, data: Buffer.from(vmc.readFile("/" + name + "/" + e.name)) }));
+
+    if (back.length === original.length && original.every((f, i) =>
+        back[i].name === f.name && back[i].data.equals(f.data))) cbsRound++;
+    else cbsProblems.push(name + ": round trip changed the files");
+
+    vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+  }
+
+  ok("every save on the card exports as .cbs (" + cbsDone + " of " + saves.length + ")",
+     saves.length > 0 && cbsDone === saves.length, cbsProblems.slice(0, 2).join(" | "));
+  ok("the wasm and the CLI produce byte-identical .cbs (" + cbsMatched + ")",
+     cbsMatched === saves.length, cbsProblems.slice(0, 2).join(" | "));
+  ok("export then import returns the same files (" + cbsRound + ")",
+     cbsRound === saves.length, cbsProblems.slice(0, 2).join(" | "));
+
+  vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+  ok("an exported .cbs is identified as CBS",
+     vmc.detect(vmc.cbsExport("/" + saves[0])) === F.CBS);
+
+  /*
+   * The strong one: read a real CodeBreaker file in and write it straight back
+   * out. Everything has to line up - header, entry layout, deflate stream and
+   * the RC4 keystream over it - for the bytes to land in the same places.
+   *
+   * This does lean on zlib's deflate output, which is not guaranteed stable
+   * across versions. Two independent builds agree today (the system zlib the
+   * CLI links, and the 1.3.2 the wasm carries); should a future one diverge,
+   * only this check fails and the round-trip checks above still hold.
+   */
+  for (const f of containers.filter(f => /\.cbs$/i.test(f))) {
+    const orig = fs.readFileSync(path.join(SAMPLES, f));
+    vmc.openCard(blankCard("cbsid-" + f.replace(/\W/g, "_")));
+    vmc.saveImport(new Uint8Array(orig));
+
+    const dir = vmc.list("/").filter(e => e.isDir && !isDot(e.name))[0].name;
+    const again = Buffer.from(vmc.cbsExport("/" + dir));
+
+    ok(f + ": rewriting it reproduces the original byte for byte",
+       cmpBytes(orig, again) === null, cmpBytes(orig, again));
+  }
+
+  /* ---------- 3d. the header carries its own length ---------- */
+  console.log("\n=== .cbs dataOffset is honoured ===");
+  {
+    /* Every file seen puts the body at 296, but dataOffset is what says so,
+     * and mymcplusplus reads it as the header length. Move the body and check
+     * the same save still comes out. */
+    const f = containers.find(c => /\.cbs$/i.test(c));
+    const b = fs.readFileSync(path.join(SAMPLES, f));
+    const HLEN = b.readUInt32LE(8);
+
+    const readBack = (bytes) => {
+      vmc.openCard(blankCard("hlen" + bytes.length));
+      vmc.saveImport(new Uint8Array(bytes));
+      const dir = vmc.list("/").filter(e => e.isDir && !isDot(e.name))[0].name;
+      return vmc.list("/" + dir).filter(e => !e.isDir).map(e =>
+        e.name + ":" + Buffer.from(vmc.readFile("/" + dir + "/" + e.name))
+          .toString("hex").slice(0, 32));
+    };
+
+    /* padded: the body sits 64 bytes further along than the struct's size */
+    const padded = Buffer.concat([b.subarray(0, HLEN), Buffer.alloc(64),
+                                  b.subarray(HLEN)]);
+    padded.writeUInt32LE(HLEN + 64, 8);
+
+    /* trimmed: a header that stops right after the fields a reader needs */
+    const SHORT = 124;
+    const trimmed = Buffer.concat([b.subarray(0, SHORT), b.subarray(HLEN)]);
+    trimmed.writeUInt32LE(SHORT, 8);
+
+    const want = JSON.stringify(readBack(b));
+    for (const [label, bytes] of [["a longer", padded], ["a shorter", trimmed]]) {
+      let err = null, same = false;
+      try { same = JSON.stringify(readBack(bytes)) === want; }
+      catch (e) { err = e.message; }
+      ok(label + " header (dataOffset " + bytes.readUInt32LE(8) +
+         ") reads the same files", same && !err, err || "file lists differ");
+    }
+  }
+
   /* ---------- 4. malformed input ---------- */
   console.log("\n=== malformed containers are rejected ===");
 

@@ -31,10 +31,10 @@ emcc \
 	"$ROOT/src/ps2save.c" \
 	"$ROOT/src/ps2blank.c" \
 	"$ROOT/src/lzari.c" \
-	"$ROOT/src/miniz_tinfl.c" \
 	src/web_api.c \
 	-o "$OUT" \
 	--no-entry \
+	-s USE_ZLIB=1 \
 	-s MODULARIZE=1 \
 	-s EXPORT_NAME=createPS2VMC \
 	-s EXPORT_ES6=0 \

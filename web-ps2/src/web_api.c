@@ -494,11 +494,12 @@ KEEP int vmc_psu_import(uint8_t *data, int size)
 }
 
 /* ------------------------------------------------------------------ */
-/* XPS export                                                         */
+/* XPS and CBS export                                                 */
 /* ------------------------------------------------------------------ */
 
-/* Serialise a save as an Xploder/SharkPort .xps; caller frees the buffer. */
-KEEP uint8_t *vmc_xps_export(const char *path, int *out_len)
+/* Read a save off the card and hand it to one of the container builders. */
+static uint8_t *save_export(const char *path, int *out_len,
+			    int (*build)(const ps2save_t *, uint8_t **, size_t *))
 {
 	ps2save_t save;
 	uint8_t *buf;
@@ -511,7 +512,7 @@ KEEP uint8_t *vmc_xps_export(const char *path, int *out_len)
 		return NULL;
 	}
 
-	r = ps2save_build_xps(&save, &buf, &len);
+	r = build(&save, &buf, &len);
 	ps2save_free(&save);
 
 	if (r < 0) {
@@ -521,6 +522,18 @@ KEEP uint8_t *vmc_xps_export(const char *path, int *out_len)
 
 	*out_len = (int)len;
 	return buf;
+}
+
+/* Serialise a save as an Xploder/SharkPort .xps; caller frees the buffer. */
+KEEP uint8_t *vmc_xps_export(const char *path, int *out_len)
+{
+	return save_export(path, out_len, ps2save_build_xps);
+}
+
+/* Serialise a save as a CodeBreaker .cbs; caller frees the buffer. */
+KEEP uint8_t *vmc_cbs_export(const char *path, int *out_len)
+{
+	return save_export(path, out_len, ps2save_build_cbs);
 }
 
 /* ------------------------------------------------------------------ */

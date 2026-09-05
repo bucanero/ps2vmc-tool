@@ -90,14 +90,14 @@ int ps2save_write(const ps2save_t *save);
 int ps2save_read_card(const char *path, ps2save_t *out);
 
 /*
- * Serialise a save as an Xploder/SharkPort .xps. `*out` is malloc'd and owned
- * by the caller. Returns 0 or a negative PS2SAVE_ERR_*.
+ * Serialise a save as an Xploder/SharkPort .xps or a CodeBreaker .cbs. `*out`
+ * is malloc'd and owned by the caller. Returns 0 or a negative PS2SAVE_ERR_*.
  *
- * There is no .cbs writer: that container needs a deflate compressor, and
- * .max is not written either - its header under-reports both its sizes, so a
- * file we produced would be as awkward to read back as the ones in the wild.
+ * There is no .max writer: its header under-reports both its sizes, so a file
+ * we produced would be as awkward to read back as the ones in the wild.
  */
 int ps2save_build_xps(const ps2save_t *save, uint8_t **out, size_t *out_len);
+int ps2save_build_cbs(const ps2save_t *save, uint8_t **out, size_t *out_len);
 
 void ps2save_free(ps2save_t *save);
 

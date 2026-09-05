@@ -49,6 +49,7 @@ enum ps2vmc_cmd {
 	CMD_PSU_EXPORT,
 	CMD_PSV_EXPORT,
 	CMD_XPS_EXPORT,
+	CMD_CBS_EXPORT,
 	CMD_ICONS_PNG,
 	CMD_EXTRACT,
 	CMD_MCFORMAT,
@@ -89,6 +90,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --psu-export, -psu <mc path> <output filepath>\n");
 	printf("\t --psv-export, -psv <mc path> <output filepath>\n");
 	printf("\t --xps-export, -xps <mc path> <output filepath>\n");
+	printf("\t --cbs-export, -cbs <mc path> <output filepath>\n");
 	printf("\n");
 }
 
@@ -805,8 +807,12 @@ static int cmd_import(const char *input)
  * from the file rather than the flag, so any of the three switches accepts any
  * of the three containers.
  */
-/* Export a save as an Xploder/SharkPort .xps. */
-static int cmd_xps_export(const char *path, const char *output)
+/*
+ * Export a save as one of the third-party containers. The two differ only in
+ * the builder they call, so they share everything around it.
+ */
+static int cmd_save_export(const char *path, const char *output, const char *fmt,
+			   int (*build)(const ps2save_t *, uint8_t **, size_t *))
 {
 	ps2save_t save;
 	uint8_t *buf;
@@ -825,11 +831,11 @@ static int cmd_xps_export(const char *path, const char *output)
 		printf("Adding %s/%-40s | %8u bytes\n", save.dirname,
 			save.files[i].name, save.files[i].size);
 
-	r = ps2save_build_xps(&save, &buf, &len);
+	r = build(&save, &buf, &len);
 	ps2save_free(&save);
 
 	if (r < 0) {
-		fprintf(stderr, "Error: can't build an XPS from '%s' (%d)\n", path, r);
+		fprintf(stderr, "Error: can't build %s from '%s' (%d)\n", fmt, path, r);
 		return r;
 	}
 
@@ -1162,6 +1168,14 @@ int main(int argc, char **argv)
 			cmd = CMD_XPS_EXPORT;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--cbs-export") || !strcmp(argv[2], "-cbs")) {
+			if (argc < 4) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_CBS_EXPORT;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--psv-export") || !strcmp(argv[2], "-psv") ||
 			 !strcmp(argv[2], "-pv")) {
 			if (argc < 4) {
@@ -1252,9 +1266,16 @@ int main(int argc, char **argv)
 				fprintf(stderr, "Error: can't export save to PSV... (%d)\n", r);
 		}
 		else if (cmd == CMD_XPS_EXPORT) {
-			r = cmd_xps_export(cmd_args[0], cmd_args[1]);
+			r = cmd_save_export(cmd_args[0], cmd_args[1], "an XPS",
+					    ps2save_build_xps);
 			if (r < 0)
 				fprintf(stderr, "Error: can't export save to XPS... (%d)\n", r);
+		}
+		else if (cmd == CMD_CBS_EXPORT) {
+			r = cmd_save_export(cmd_args[0], cmd_args[1], "a CBS",
+					    ps2save_build_cbs);
+			if (r < 0)
+				fprintf(stderr, "Error: can't export save to CBS... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();
