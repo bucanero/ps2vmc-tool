@@ -36,8 +36,7 @@ backend, just ten static files, all of them plain text.
 | `--make-directory` | *New folder* |
 | `--psu-export` | *Export ▾ → PSU* on a save card |
 | `--psv-export` | *Export ▾ → PSV* — a signed PS3 save |
-| `--psu-import`, `--psv-import` | *Import save…* (the format is detected from the file) |
-| `--cbs-import`, `--max-import`, `--xps-import` | *Import save…* — CodeBreaker, Action Replay MAX, Xploder/SharkPort |
+| `--import` | *Import save…* — PSU, PSV, CBS, MAX or XPS, detected from the file |
 | `--xps-export` | *Export ▾ → XPS* on a save card |
 | `--mc-image` | *Download card ▾ → Raw, ECC stripped* |
 | `--ecc-image` | *Download card ▾ → With ECC spare* |
@@ -193,9 +192,11 @@ turns each into one structure and a single writer puts it on the card. That file
 is compiled into both the CLI and the wasm, so the two cannot drift; `.psu` and
 `.psv` keep their existing importers untouched.
 
-The format is decided by looking at the data, never at the file extension — the
-same `ps2save_detect()` runs behind the CLI's three switches and the web page's
-one *Import save…* button, so any switch accepts any of the three.
+The format is decided by looking at the data, never at the file extension, so
+neither the CLI nor the page needs to be told what a file is: `--import` and
+*Import save…* both hand the bytes to the same `ps2save_detect()`. The CLI's
+older `--psu-import` and `--psv-import` still work and now accept any of the
+five, but they are no longer advertised.
 
 Two things worth knowing:
 

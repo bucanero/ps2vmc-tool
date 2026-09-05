@@ -131,13 +131,12 @@ async function main() {
     const src = path.join(SAMPLES, f);
     const bytes = new Uint8Array(fs.readFileSync(src));
     const tag = path.basename(f).replace(/\W/g, "_");
-    const kind = path.extname(f).slice(1).toLowerCase();
 
     /* --- the CLI's copy --- */
     const cliCard = path.join(tmp, tag + "-cli.vmc");
     fs.copyFileSync(path.join(SAMPLES, "ps2card.vmc"), cliCard);
     cli(cliCard, ["--mc-format"]);
-    cli(cliCard, ["--" + kind + "-import", src]);
+    cli(cliCard, ["--import", src]);
 
     /* --- the wasm's copy --- */
     vmc.openCard(blankCard(tag));

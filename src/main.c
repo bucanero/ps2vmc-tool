@@ -56,8 +56,6 @@ enum ps2vmc_cmd {
 	CMD_RMDIR,
 	CMD_REMOVE,
 	CMD_CROSSLINK,
-	CMD_PSU_IMPORT,
-	CMD_PSV_IMPORT,
 	CMD_SAVE_IMPORT,
 };
 
@@ -84,14 +82,10 @@ static void print_usage(int argc, char **argv)
 	printf("\t --remove-directory, -rmdir <mc path>\n");
 	printf("\t --remove, -rm <mc filepath>\n");
 	printf("\t --file-crosslink, -cl <real mc filepath> <dummy mc filepath>\n");
-	printf("\t --psv-import, -pi <PSV filepath>\n");
-	printf("\t --psu-import, -pu <PSU filepath>\n");
-	printf("\t --cbs-import, -cbs <CBS filepath>\n");
-	printf("\t --max-import, -max <MAX filepath>\n");
-	printf("\t --xps-import, -xps <XPS filepath>\n");
-	printf("\t --psu-export, -px <mc path> <output filepath>\n");
-	printf("\t --psv-export, -pv <mc path> <output filepath>\n");
-	printf("\t --xps-export, -xe <mc path> <output filepath>\n");
+	printf("\t --import, -imp <save filepath>  (PSU, PSV, CBS, MAX or XPS)\n");
+	printf("\t --psu-export, -psu <mc path> <output filepath>\n");
+	printf("\t --psv-export, -psv <mc path> <output filepath>\n");
+	printf("\t --xps-export, -xps <mc path> <output filepath>\n");
 	printf("\n");
 }
 
@@ -847,6 +841,13 @@ static int cmd_xps_export(const char *path, const char *output)
 	return 0;
 }
 
+static int cmd_psu_import(const char *input);
+
+/*
+ * Import a save of any supported format. The container is identified from its
+ * contents, never from the file name, by the same ps2save_detect() the web
+ * build uses - so there is nothing for the caller to get wrong.
+ */
 static int cmd_save_import(const char *input)
 {
 	ps2save_t save;
@@ -860,11 +861,24 @@ static int cmd_save_import(const char *input)
 	}
 
 	fmt = ps2save_detect(buf, len);
-	if (fmt == PS2SAVE_PSU || fmt == PS2SAVE_PSV) {
-		fprintf(stderr, "Error: '%s' is a %s file, use --%s-import\n", input,
-			ps2save_format_name(fmt), fmt == PS2SAVE_PSU ? "psu" : "psv");
-		free(buf);
+	free(buf);
+
+	/* PSU and PSV have their own readers already; hand them straight over. */
+	if (fmt == PS2SAVE_PSU)
+		return cmd_psu_import(input);
+
+	if (fmt == PS2SAVE_PSV)
+		return cmd_import(input);
+
+	if (fmt != PS2SAVE_CBS && fmt != PS2SAVE_MAX && fmt != PS2SAVE_XPS) {
+		fprintf(stderr, "Error: '%s' is not a PS2 save "
+			"(expected PSU, PSV, CBS, MAX or XPS)\n", input);
 		return PS2SAVE_ERR_FORMAT;
+	}
+
+	if (read_buffer(input, &buf, &len) < 0) {
+		fprintf(stderr, "Error: can't open file '%s'\n", input);
+		return -1000;
 	}
 
 	printf("Reading file: '%s'...\n", input);
@@ -1109,17 +1123,13 @@ int main(int argc, char **argv)
 			cmd = CMD_CROSSLINK;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--psu-import") || !strcmp(argv[2], "-pu")) {
-			if (argc < 3) {
-				print_usage(argc, argv);
-				return 1;
-			}
-			cmd = CMD_PSU_IMPORT;
-			cmd_args = &argv[3];
-		}
-		else if (!strcmp(argv[2], "--cbs-import") || !strcmp(argv[2], "-cbs") ||
-			 !strcmp(argv[2], "--max-import") || !strcmp(argv[2], "-max") ||
-			 !strcmp(argv[2], "--xps-import") || !strcmp(argv[2], "-xps")) {
+		/* One import for every format: the file says what it is, so the
+		 * older spellings all land here too. --psu-import/-pu and
+		 * --psv-import/-pi are kept because they shipped; they are no longer
+		 * advertised. */
+		else if (!strcmp(argv[2], "--import") || !strcmp(argv[2], "-imp") ||
+			 !strcmp(argv[2], "--psu-import") || !strcmp(argv[2], "-pu") ||
+			 !strcmp(argv[2], "--psv-import") || !strcmp(argv[2], "-pi")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
 				return 1;
@@ -1127,15 +1137,10 @@ int main(int argc, char **argv)
 			cmd = CMD_SAVE_IMPORT;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--psv-import") || !strcmp(argv[2], "-pi")) {
-			if (argc < 3) {
-				print_usage(argc, argv);
-				return 1;
-			}
-			cmd = CMD_PSV_IMPORT;
-			cmd_args = &argv[3];
-		}
-		else if (!strcmp(argv[2], "--psu-export") || !strcmp(argv[2], "-px")) {
+		/* -px and -pv shipped, so they still work; they are not advertised.
+		 * The short options now name the format, matching --import's family. */
+		else if (!strcmp(argv[2], "--psu-export") || !strcmp(argv[2], "-psu") ||
+			 !strcmp(argv[2], "-px")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
 				return 1;
@@ -1143,7 +1148,7 @@ int main(int argc, char **argv)
 			cmd = CMD_PSU_EXPORT;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--xps-export") || !strcmp(argv[2], "-xe")) {
+		else if (!strcmp(argv[2], "--xps-export") || !strcmp(argv[2], "-xps")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
 				return 1;
@@ -1151,7 +1156,8 @@ int main(int argc, char **argv)
 			cmd = CMD_XPS_EXPORT;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--psv-export") || !strcmp(argv[2], "-pv")) {
+		else if (!strcmp(argv[2], "--psv-export") || !strcmp(argv[2], "-psv") ||
+			 !strcmp(argv[2], "-pv")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
 				return 1;
@@ -1276,20 +1282,6 @@ int main(int argc, char **argv)
 			r = cmd_crosslink(cmd_args[0], cmd_args[1]);
 			if (r < 0)
 				fprintf(stderr, "Error: can't crosslink file '%s'... (%d)\n", cmd_args[0], r);
-		}
-		else if (cmd == CMD_PSU_IMPORT) {
-			r = cmd_psu_import(cmd_args[0]);
-			if (r == sceMcResNoFormat)
-				fprintf(stderr, "Error: memory card is not formatted!\n");
-			else if (r < 0)
-				fprintf(stderr, "Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
-		}
-		else if (cmd == CMD_PSV_IMPORT) {
-			r = cmd_import(cmd_args[0]);
-			if (r == sceMcResNoFormat)
-				fprintf(stderr, "Error: memory card is not formatted!\n");
-			else if (r < 0)
-				fprintf(stderr, "Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
 		}
 		else if (cmd == CMD_SAVE_IMPORT) {
 			r = cmd_save_import(cmd_args[0]);

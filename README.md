@@ -32,14 +32,10 @@ Available commands:
 	 --remove-directory, -rmdir <mc path>
 	 --remove, -rm <mc filepath>
 	 --file-crosslink, -cl <real mc filepath> <dummy mc filepath>
-	 --psv-import, -pi <PSV filepath>
-	 --psu-import, -pu <PSU filepath>
-	 --cbs-import, -cbs <CBS filepath>
-	 --max-import, -max <MAX filepath>
-	 --xps-import, -xps <XPS filepath>
-	 --psu-export, -px <mc path> <output filepath>
-	 --psv-export, -pv <mc path> <output filepath>
-	 --xps-export, -xe <mc path> <output filepath>
+	 --import, -imp <save filepath>  (PSU, PSV, CBS, MAX or XPS)
+	 --psu-export, -psu <mc path> <output filepath>
+	 --psv-export, -psv <mc path> <output filepath>
+	 --xps-export, -xps <mc path> <output filepath>
 ```
 
 ---
