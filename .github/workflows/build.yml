@@ -93,11 +93,9 @@ jobs:
     - name: Get short SHA
       run: echo "sha_name=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
 
-    - name: Compress output
-      run: |
-        tar -zcvf build.tar.gz ps2vmc-tool ps1vmc-tool
-
     - uses: actions/upload-artifact@v4
       with:
         name: build-${{ env.sha_name }}-${{matrix.os}}
-        path: build.tar.gz
+        path: |
+          ps1vmc-tool
+          ps2vmc-tool
