@@ -53,6 +53,35 @@ function cmpBytes(a, b) {
 /* Directory entries the CLI lists but a save does not own. */
 const isDot = n => n === "." || n === "..";
 
+const XPS_ENTRY = 250;
+
+/*
+ * The closing word of an .xps, over the directory entry through the last byte
+ * of file data. Each byte is shifted by the running sum's own remainder.
+ * Recovered from PS2SaveConverter.exe; see src/ps2save.c.
+ */
+function xpsChecksum(buf) {
+  let sum = 0;
+  for (const b of buf) sum = (sum + ((b << (sum % 24)) >>> 0)) >>> 0;
+  return sum >>> 0;
+}
+
+/* Walk an .xps far enough to find the body and the stored checksum. */
+function xpsLayout(b) {
+  let o = 0x15;
+  for (let i = 0; i < 3; i++) o += 4 + b.readUInt32LE(o);
+  o += 4;                                   /* the size word */
+
+  const body = o;
+  const children = b.readUInt32LE(body + 66);
+  let off = body + XPS_ENTRY;
+  for (let i = 0; i < children - 2; i++)
+    off += XPS_ENTRY + b.readUInt32LE(off + 66);
+
+  return { body, end: off, trailing: b.length - off,
+           stored: b.length - off >= 4 ? b.readUInt32LE(off) : null };
+}
+
 async function main() {
   const vmc = await PS2VMC.load();
   const F = PS2VMC.FORMAT;
@@ -164,7 +193,93 @@ async function main() {
        "cli=" + cliNames.join(",") + " wasm=" + mineNames.join(","));
   }
 
-  /* ---------- 3. malformed input ---------- */
+  /* ---------- 3. XPS export ---------- */
+  console.log("\n=== XPS export ===");
+
+  /* Export every save on a sample card, then read it back. */
+  const srcCard = path.join(SAMPLES, "ps2card.vmc");
+  vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+  const saves = vmc.list("/").filter(e => e.isDir && !isDot(e.name)).map(e => e.name);
+
+  let exported = 0, roundTripped = 0, cliMatched = 0, problems = [];
+
+  for (const name of saves) {
+    /* what is on the card now */
+    const original = vmc.list("/" + name).filter(e => !e.isDir && !isDot(e.name))
+      .map(e => ({ name: e.name, data: Buffer.from(vmc.readFile("/" + name + "/" + e.name)) }));
+
+    let xps;
+    try { xps = vmc.xpsExport("/" + name); } catch (e) {
+      problems.push(name + ": export threw " + e.message); continue;
+    }
+    exported++;
+
+    /* the CLI must produce the same bytes */
+    const cliOut = path.join(tmp, name.replace(/\W/g, "_") + ".xps");
+    cli(srcCard, ["--xps-export", "/" + name, cliOut]);
+    const theirs = new Uint8Array(fs.readFileSync(cliOut));
+    const d = cmpBytes(xps, theirs);
+    if (d) problems.push(name + ": CLI export differs, " + d);
+    else cliMatched++;
+
+    /* and reading it back must give the same files */
+    vmc.openCard(blankCard("rt-" + name.replace(/\W/g, "_")));
+    try { vmc.saveImport(xps); } catch (e) {
+      problems.push(name + ": re-import threw " + e.message);
+      vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+      continue;
+    }
+
+    const back = vmc.list("/" + name).filter(e => !e.isDir && !isDot(e.name))
+      .map(e => ({ name: e.name, data: Buffer.from(vmc.readFile("/" + name + "/" + e.name)) }));
+
+    const same = back.length === original.length && original.every((f, i) =>
+      back[i].name === f.name && back[i].data.equals(f.data));
+    if (same) roundTripped++;
+    else problems.push(name + ": round trip changed the files");
+
+    vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+  }
+
+  ok("every save on the card exports as .xps (" + exported + " of " + saves.length + ")",
+     saves.length > 0 && exported === saves.length, problems.slice(0, 2).join(" | "));
+  ok("the wasm and the CLI produce byte-identical .xps (" + cliMatched + ")",
+     cliMatched === saves.length, problems.slice(0, 2).join(" | "));
+  ok("export then import returns the same files (" + roundTripped + ")",
+     roundTripped === saves.length, problems.slice(0, 2).join(" | "));
+
+  /* The closing checksum, against files written by three different tools. */
+  let ckOk = 0, ckSeen = 0, ckBad = [];
+  for (const f of containers.filter(f => /\.xps$/i.test(f))) {
+    const b = fs.readFileSync(path.join(SAMPLES, f));
+    const L = xpsLayout(b);
+    if (L.trailing !== 4) { ckBad.push(f + ": " + L.trailing + " trailing bytes"); continue; }
+    ckSeen++;
+    const want = xpsChecksum(b.subarray(L.body, L.end));
+    if (want === L.stored) ckOk++;
+    else ckBad.push(f + ": stored 0x" + L.stored.toString(16) + " computed 0x" + want.toString(16));
+  }
+  ok("the checksum algorithm matches real .xps files (" + ckOk + " of " + ckSeen + ")",
+     ckSeen > 0 && ckOk === ckSeen, ckBad.join(" | "));
+
+  /* And everything we write carries a valid one. */
+  vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+  let signed = 0, unsigned = [];
+  for (const name of saves) {
+    const b = Buffer.from(vmc.xpsExport("/" + name));
+    const L = xpsLayout(b);
+    if (L.trailing === 4 && L.stored === xpsChecksum(b.subarray(L.body, L.end))) signed++;
+    else unsigned.push(name);
+  }
+  ok("every .xps we write closes with a valid checksum (" + signed + " of " + saves.length + ")",
+     signed === saves.length, unsigned.join(", "));
+
+  /* The container we write must satisfy our own detector. */
+  vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+  const oneXps = vmc.xpsExport("/" + saves[0]);
+  ok("an exported .xps is identified as XPS", vmc.detect(oneXps) === F.XPS);
+
+  /* ---------- 4. malformed input ---------- */
   console.log("\n=== malformed containers are rejected ===");
 
   for (const f of containers) {

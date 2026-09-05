@@ -44,6 +44,7 @@ enum ps2save_format {
 #define PS2SAVE_ERR_FORMAT      -1010
 #define PS2SAVE_ERR_TRUNCATED   -1011
 #define PS2SAVE_ERR_DECOMPRESS  -1012
+#define PS2SAVE_ERR_EXISTS      -1013
 
 /* A save is at most a directory of files; no container nests deeper. */
 #define PS2SAVE_MAX_FILES       512
@@ -81,6 +82,22 @@ int ps2save_parse(const uint8_t *buf, size_t len, ps2save_t *out);
 
 /* Create the directory and its files on the mounted card. Returns 0 or <0. */
 int ps2save_write(const ps2save_t *save);
+
+/*
+ * Read a save directory off the mounted card into `out`. Returns 0 or a
+ * negative mcio/PS2SAVE_ERR_* code. On success the caller must ps2save_free().
+ */
+int ps2save_read_card(const char *path, ps2save_t *out);
+
+/*
+ * Serialise a save as an Xploder/SharkPort .xps. `*out` is malloc'd and owned
+ * by the caller. Returns 0 or a negative PS2SAVE_ERR_*.
+ *
+ * There is no .cbs writer: that container needs a deflate compressor, and
+ * .max is not written either - its header under-reports both its sizes, so a
+ * file we produced would be as awkward to read back as the ones in the wild.
+ */
+int ps2save_build_xps(const ps2save_t *save, uint8_t **out, size_t *out_len);
 
 void ps2save_free(ps2save_t *save);
 

@@ -471,10 +471,17 @@ static int parse_xps(const uint8_t *buf, size_t len, ps2save_t *out)
 	if (len < 0x15 || memcmp(buf + 4, XPS_MAGIC, 16) != 0)
 		return PS2SAVE_ERR_FORMAT;
 
-	/* Two variable-length text blocks, then two words, then the entries.
-	 * The reference reads these into a 100-byte stack buffer without
+	/* Three variable-length description strings, then the size word, then the
+	 * entries. The third one is the writer's own signature and is often empty,
+	 * which is why reading only two of them and treating the leftover length
+	 * as a spare word appears to work - until a writer fills it in. The
+	 * reference converter reads two and skips eight bytes, so it rejects any
+	 * file whose third string is not empty, PS2SaveConverter.exe's own output
+	 * included.
+	 *
+	 * The reference also reads these into a 100-byte stack buffer without
 	 * checking the length; here they are skipped, not read. */
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < 3; i++) {
 		uint32_t n;
 
 		if (off + 4 > len)
@@ -487,9 +494,9 @@ static int parse_xps(const uint8_t *buf, size_t len, ps2save_t *out)
 		off += n;
 	}
 
-	if (off + 8 > len)
+	if (off + 4 > len)
 		return PS2SAVE_ERR_TRUNCATED;
-	off += 8;
+	off += 4;                              /* size of the body that follows */
 
 	if (off + sizeof(entry) > len)
 		return PS2SAVE_ERR_TRUNCATED;
@@ -571,6 +578,331 @@ int ps2save_parse(const uint8_t *buf, size_t len, ps2save_t *out)
 	return r;
 }
 
+/* ------------------------------------------------------------------ */
+/* reading a save off the card                                        */
+/* ------------------------------------------------------------------ */
+
+int ps2save_read_card(const char *path, ps2save_t *out)
+{
+	struct io_dirent dirent;
+	char filepath[288];
+	int dd, fd, r, i, n;
+
+	if (!path || !out)
+		return PS2SAVE_ERR_FORMAT;
+
+	memset(out, 0, sizeof(*out));
+
+	r = mcio_mcStat(path, &dirent);
+	if (r < 0)
+		return r;
+
+	/* A directory's size is its entry count, "." and ".." included. */
+	n = (int)dirent.stat.size - 2;
+	r = alloc_files(out, n);
+	if (r < 0)
+		return r;
+
+	copy_name(out->dirname, sizeof(out->dirname), dirent.name, sizeof(out->dirname) - 1);
+	out->mode = (uint16_t)dirent.stat.mode;
+	out->created = dirent.stat.ctime;
+	out->modified = dirent.stat.mtime;
+
+	dd = mcio_mcDopen(path);
+	if (dd < 0) {
+		ps2save_free(out);
+		return dd;
+	}
+
+	for (i = 0; i < n; ) {
+		if (mcio_mcDread(dd, &dirent) == 0)
+			break;
+
+		if (!strcmp(dirent.name, ".") || !strcmp(dirent.name, ".."))
+			continue;
+
+		snprintf(filepath, sizeof(filepath), "%s/%s", path, dirent.name);
+
+		/* Re-stat: readdir rebuilds mode from a subset of the flags and drops
+		 * the Exists/Closed bits, the same reason the PSU exporter re-stats. */
+		if (mcio_mcStat(filepath, &dirent) < 0)
+			continue;
+
+		copy_name(out->files[i].name, sizeof(out->files[i].name),
+			  dirent.name, sizeof(out->files[i].name) - 1);
+		out->files[i].mode = (uint16_t)dirent.stat.mode;
+		out->files[i].created = dirent.stat.ctime;
+		out->files[i].modified = dirent.stat.mtime;
+		out->files[i].size = dirent.stat.size;
+
+		out->files[i].data = malloc(dirent.stat.size ? dirent.stat.size : 1);
+		if (!out->files[i].data) {
+			mcio_mcDclose(dd);
+			ps2save_free(out);
+			return PS2SAVE_ERR_MEMORY;
+		}
+
+		if (dirent.stat.size) {
+			fd = mcio_mcOpen(filepath, sceMcFileAttrReadable | sceMcFileAttrFile);
+			if (fd < 0) {
+				mcio_mcDclose(dd);
+				ps2save_free(out);
+				return fd;
+			}
+
+			r = mcio_mcRead(fd, out->files[i].data, dirent.stat.size);
+			mcio_mcClose(fd);
+
+			if (r != (int)dirent.stat.size) {
+				mcio_mcDclose(dd);
+				ps2save_free(out);
+				return PS2SAVE_ERR_TRUNCATED;
+			}
+		}
+
+		i++;
+	}
+
+	mcio_mcDclose(dd);
+
+	/* Fewer entries than the directory claimed: keep only what was read. */
+	out->file_count = i;
+	if (i == 0) {
+		ps2save_free(out);
+		return PS2SAVE_ERR_FORMAT;
+	}
+
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* writing an .xps                                                    */
+/* ------------------------------------------------------------------ */
+
+/* Full-width punctuation (Shift-JIS row 0x81) that has a plain equivalent. */
+static char sjis_punct(uint8_t lo)
+{
+	static const struct { uint8_t lo; char c; } map[] = {
+		{ 0x40, ' ' }, { 0x41, ',' }, { 0x42, '.' }, { 0x43, ',' }, { 0x44, '.' },
+		{ 0x45, '.' }, { 0x46, ':' }, { 0x47, ';' }, { 0x48, '?' }, { 0x49, '!' },
+		{ 0x4D, '`' }, { 0x4F, '^' }, { 0x50, '~' }, { 0x51, '_' }, { 0x5B, '-' },
+		{ 0x5C, '-' }, { 0x5D, '-' }, { 0x5E, '/' }, { 0x5F, '\\' }, { 0x60, '~' },
+		{ 0x61, '|' }, { 0x62, '|' }, { 0x65, '\'' }, { 0x66, '\'' }, { 0x67, '"' },
+		{ 0x68, '"' }, { 0x69, '(' }, { 0x6A, ')' }, { 0x6D, '[' }, { 0x6E, ']' },
+		{ 0x6F, '{' }, { 0x70, '}' }, { 0x7B, '+' }, { 0x7C, '-' }, { 0x7E, 'x' },
+		{ 0x81, '=' }, { 0x83, '<' }, { 0x84, '>' }, { 0x90, '$' }, { 0x93, '%' },
+		{ 0x94, '#' }, { 0x95, '&' }, { 0x96, '*' }, { 0x97, '@' }
+	};
+
+	for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+		if (map[i].lo == lo)
+			return map[i].c;
+
+	return '?';
+}
+
+/*
+ * Shift-JIS titles down to plain ASCII for the container's text fields, which
+ * are 7-bit. Full-width letters, digits and punctuation have exact
+ * equivalents; kana and kanji become '?', since there is nothing to map them
+ * to. The Shift-JIS original is written alongside, untouched.
+ */
+static size_t sjis_to_ascii(const char *src, size_t srclen, char *dst, size_t dstsz)
+{
+	size_t i = 0, o = 0;
+
+	while (i < srclen && src[i] && o + 1 < dstsz) {
+		uint8_t hi = (uint8_t)src[i];
+		uint8_t lo = (i + 1 < srclen) ? (uint8_t)src[i + 1] : 0;
+
+		if (hi == 0x81 && i + 1 < srclen) {
+			dst[o++] = sjis_punct(lo);
+			i += 2;
+		}
+		else if (hi == 0x82 && i + 1 < srclen && lo >= 0x4F && lo <= 0x58) {
+			dst[o++] = (char)('0' + (lo - 0x4F));
+			i += 2;
+		}
+		else if (hi == 0x82 && i + 1 < srclen && lo >= 0x60 && lo <= 0x79) {
+			dst[o++] = (char)('A' + (lo - 0x60));
+			i += 2;
+		}
+		else if (hi == 0x82 && i + 1 < srclen && lo >= 0x81 && lo <= 0x9A) {
+			dst[o++] = (char)('a' + (lo - 0x81));
+			i += 2;
+		}
+		else if (hi >= 0x81 && hi <= 0x9F && i + 1 < srclen) {
+			dst[o++] = '?';           /* kana or kanji: no ASCII equivalent */
+			i += 2;
+		}
+		else {
+			dst[o++] = src[i++];      /* already single-byte */
+		}
+	}
+
+	dst[o] = '\0';
+	return o;
+}
+
+/* Pull the two title lines out of a save's icon.sys, if it has one. */
+static void save_title(const ps2save_t *save, char *line1, size_t l1sz,
+		       char *line2, size_t l2sz, char *sjis, size_t sjsz)
+{
+	const ps2save_file_t *sys = NULL;
+	const char *title;
+	unsigned split;
+	int i;
+
+	line1[0] = line2[0] = sjis[0] = '\0';
+
+	for (i = 0; i < save->file_count; i++)
+		if (!strcmp(save->files[i].name, "icon.sys"))
+			sys = &save->files[i];
+
+	/* title[68] sits at 0xC0, and secondLineOffset at 0x06 says where the
+	 * second line starts inside it. */
+	if (!sys || sys->size < 0xC0 + 68 || memcmp(sys->data, "PS2D", 4) != 0)
+		return;
+
+	title = (const char *)sys->data + 0xC0;
+	split = (unsigned)(sys->data[6] | (sys->data[7] << 8));
+	if (split > 68)
+		split = 68;
+
+	sjis_to_ascii(title, split, line1, l1sz);
+	sjis_to_ascii(title + split, 68 - split, line2, l2sz);
+
+	/* The raw Shift-JIS title, as the entry's own sjis field. */
+	memcpy(sjis, title, sjsz - 1 < 68 ? sjsz - 1 : 68);
+	sjis[sjsz - 1 < 68 ? sjsz - 1 : 68] = '\0';
+}
+
+/*
+ * The four bytes that close an .xps, over everything from the directory entry
+ * to the last byte of file data:
+ *
+ *     sum = 0;  for each byte b:  sum += b << (sum % 24)
+ *
+ * Each byte is shifted by the running sum's own remainder, so it depends on
+ * order as well as content. Recovered from the divide-by-24 loop at 0x4093c1
+ * in PS2SaveConverter.exe and confirmed against three files from three
+ * different writers.
+ */
+static uint32_t xps_checksum(const uint8_t *p, size_t len)
+{
+	uint32_t sum = 0;
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		sum += (uint32_t)p[i] << (sum % 24);
+
+	return sum;
+}
+
+static void put_u32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+	p[2] = (uint8_t)(v >> 16);
+	p[3] = (uint8_t)(v >> 24);
+}
+
+/* Fill one xps_entry_t. `data_len` is 0 for the directory entry. */
+static void xps_entry(xps_entry_t *e, const char *name, uint32_t length, uint16_t mode,
+		      const struct sceMcStDateTime *c, const struct sceMcStDateTime *m,
+		      const char *title_a, const char *title_s)
+{
+	memset(e, 0, sizeof(*e));
+	e->entry_sz = sizeof(*e);
+	strncpy(e->name, name, sizeof(e->name) - 1);
+	e->length = length;
+	e->mode = mode_swap(mode);
+	e->created = *c;
+	e->modified = *m;
+	strncpy(e->title_ascii, title_a, sizeof(e->title_ascii) - 1);
+	strncpy(e->title_sjis, title_s, sizeof(e->title_sjis) - 1);
+}
+
+int ps2save_build_xps(const ps2save_t *save, uint8_t **out, size_t *out_len)
+{
+	char line1[80], line2[80], sjis[80], title[160];
+	xps_entry_t e;
+	uint8_t *buf;
+	size_t total, data_sum = 0, o = 0, body_start;
+	uint32_t body;
+	int i;
+
+	if (!save || !out || !out_len || save->file_count <= 0)
+		return PS2SAVE_ERR_FORMAT;
+
+	*out = NULL;
+	*out_len = 0;
+
+	save_title(save, line1, sizeof(line1), line2, sizeof(line2), sjis, sizeof(sjis));
+	snprintf(title, sizeof(title), "%s%s", line1, line2);
+
+	for (i = 0; i < save->file_count; i++)
+		data_sum += save->files[i].size;
+
+	/* Everything from the directory entry to the last byte of file data. */
+	body = (uint32_t)(sizeof(xps_entry_t) * (save->file_count + 1) + data_sum);
+
+	total = 0x15                                  /* magic block */
+	      + 4 + strlen(line1)                     /* description 1 */
+	      + 4 + strlen(line2)                     /* description 2 */
+	      + 4                                     /* description 3, empty */
+	      + 4                                     /* size of what follows */
+	      + body
+	      + 4;                                    /* checksum */
+
+	buf = calloc(1, total);
+	if (!buf)
+		return PS2SAVE_ERR_MEMORY;
+
+	put_u32(buf, 13);                             /* length of the magic text */
+	memcpy(buf + 4, XPS_MAGIC, 16);               /* "SharkPortSave" + padding */
+	o = 0x15;
+
+	put_u32(buf + o, (uint32_t)strlen(line1)); o += 4;
+	memcpy(buf + o, line1, strlen(line1));     o += strlen(line1);
+	put_u32(buf + o, (uint32_t)strlen(line2)); o += 4;
+	memcpy(buf + o, line2, strlen(line2));     o += strlen(line2);
+
+	/* A third description string. Writers use it for their own signature; ours
+	 * is left empty. Reading an empty one as a length of zero is why it can
+	 * look like a spare word. */
+	put_u32(buf + o, 0);    o += 4;
+	put_u32(buf + o, body); o += 4;
+
+	body_start = o;
+
+	/* The directory entry counts "." and ".." among its children. */
+	xps_entry(&e, save->dirname, (uint32_t)save->file_count + 2, save->mode,
+		  &save->created, &save->modified, title, sjis);
+	memcpy(buf + o, &e, sizeof(e));
+	o += sizeof(e);
+
+	for (i = 0; i < save->file_count; i++) {
+		const ps2save_file_t *f = &save->files[i];
+
+		/* Real files repeat the filename in both title fields. */
+		xps_entry(&e, f->name, f->size, f->mode, &f->created, &f->modified,
+			  f->name, f->name);
+		memcpy(buf + o, &e, sizeof(e));
+		o += sizeof(e);
+
+		memcpy(buf + o, f->data, f->size);
+		o += f->size;
+	}
+
+	put_u32(buf + o, xps_checksum(buf + body_start, o - body_start));
+	o += 4;
+
+	*out = buf;
+	*out_len = o;
+	return 0;
+}
+
 int ps2save_write(const ps2save_t *save)
 {
 	struct io_dirent dirent;
@@ -579,6 +911,13 @@ int ps2save_write(const ps2save_t *save)
 
 	if (!save || save->dirname[0] == '\0')
 		return PS2SAVE_ERR_FORMAT;
+
+	/* mcio reports "directory exists" from mcMkDir as sceMcResNoEntry, which
+	 * reads as "no such file or directory" - the opposite of what happened.
+	 * Check first so the caller can say something true, and so an existing
+	 * save is never half-overwritten. */
+	if (mcio_mcStat(save->dirname, &dirent) == sceMcResSucceed)
+		return PS2SAVE_ERR_EXISTS;
 
 	r = mcio_mcMkDir(save->dirname);
 	if (r < 0)

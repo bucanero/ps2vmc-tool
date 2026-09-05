@@ -38,6 +38,7 @@ backend, just ten static files, all of them plain text.
 | `--psv-export` | *Export ▾ → PSV* — a signed PS3 save |
 | `--psu-import`, `--psv-import` | *Import save…* (the format is detected from the file) |
 | `--cbs-import`, `--max-import`, `--xps-import` | *Import save…* — CodeBreaker, Action Replay MAX, Xploder/SharkPort |
+| `--xps-export` | *Export ▾ → XPS* on a save card |
 | `--mc-image` | *Download card ▾ → Raw, ECC stripped* |
 | `--ecc-image` | *Download card ▾ → With ECC spare* |
 | `--mc-format` | *Format card* |
@@ -133,7 +134,7 @@ node web-ps2/test/difftest.js    # wasm vs CLI, 92 checks
 node web-ps2/test/icontest.js    # icon parsing and animation, 25 checks
 node web-ps2/test/hexedit.js     # hex editing on both cards, 38 checks
 node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 103 checks
-node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers, wasm vs CLI, 21 checks
+node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers and the XPS writer, 37 checks
 ```
 
 `difftest.js` runs each operation twice — once through the wasm module, once
@@ -228,10 +229,71 @@ which the allocator serves as zero pages, and the tail of that particular
 Our output for all three sample containers is byte-identical to the reference's,
 this file included.
 
+### Writing .xps
+
+*Export ▾* offers `.XPS` alongside `.PSU` and `.PSV`. Only that one container is
+written: `.cbs` would need a deflate compressor, which the decompress-only miniz
+here does not provide, and `.max` is not worth writing — its header under-reports
+both of its sizes, so a file we produced would be as awkward to read back as the
+ones in the wild.
+
+The two description strings a `.xps` carries are free-form: one real sample holds
+its authoring tool's name, another holds the save's title. Ours get the two title
+lines from `icon.sys`, converted from Shift-JIS to the 7-bit ASCII those fields
+use — full-width letters, digits and punctuation map exactly, kana and kanji
+become `?`, and the untouched Shift-JIS original goes in the entry's own field
+next to it.
+
+Exporting the save that `samples/myth-makers-super-kart-gp.22840.xps` came from
+reproduces that file's directory mode, size word, per-file modes and all four
+files byte for byte. The two description strings differ, and account exactly for
+the 8-byte difference in total size.
+
+### The closing checksum
+
+A `.xps` ends with a four-byte checksum over its body — the directory entry
+through the last byte of file data:
+
+```c
+sum = 0;  for each byte b:  sum += b << (sum % 24);
+```
+
+Each byte is shifted by the running sum's own remainder, so it depends on order
+as well as content. It matches no standard checksum, which is why guessing it
+failed; it came out of the divide-by-24 loop at `0x4093c1` in
+`PS2SaveConverter.exe`. The three `.xps` files in `samples/` were written by
+three different tools and all three verify, so this is the format's checksum
+rather than one writer's habit.
+
+### Three description strings, not two
+
+The same disassembly corrected the header. After the magic come **three**
+length-prefixed strings — the third is the writer's signature — and then the
+size word. Reading only two and skipping eight bytes appears to work whenever
+that third string is empty, and it is empty in most files.
+
+The reference converter makes exactly that assumption, so it cannot read
+`PS2SaveConverter.exe`'s own output: the signature there is `Made using file
+converter by ffgriever`, and the reference walks into the middle of it, ending
+up with a save named `sing file co6E766572746572206279…`. Ours reads all three,
+and `samples/ps2saveconverter.xps` is in the suite to keep it that way.
+
+### The .max header CRC
+
+Also recovered while in there, though nothing here depends on it: the `.max`
+header CRC at offset 12 is a plain CRC32 (poly `0xEDB88320`, init and final xor
+`0xFFFFFFFF`) over the whole file with that field zeroed. Verified against
+`samples/BASLUS-20963FF1200.max`, whose stored `0xEA258A15` matches exactly. It
+is the missing piece if a `.max` writer is ever added.
+
+### Tests
+
 `test/savefmt.js` imports every `.cbs`/`.max`/`.xps` in `samples/` twice, once
 through the wasm and once through `./ps2vmc-tool`, and compares the resulting
 files byte for byte. Drop a real save into `samples/` and it is picked up with
-no change to the test.
+no change to the test. It also exports every save on the sample card as `.xps`,
+checks the wasm and the CLI emit identical bytes, and reads each one back to
+confirm the files survive the round trip.
 
 ## Hex editor
 

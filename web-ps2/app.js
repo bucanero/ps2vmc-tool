@@ -313,7 +313,8 @@ function render() {
     acts.appendChild(mkSaveBtn("Export \u25be", "", (btn) => popMenu(btn, [
       { lbl: "Export save as" },
       { text: "PSU  (uLaunchELF / EMS)", fn: () => exportPsu(save) },
-      { text: "PSV  (PS3, signed)", fn: () => exportPsv(save) }
+      { text: "PSV  (PS3, signed)", fn: () => exportPsv(save) },
+      { text: "XPS  (Xploder / SharkPort)", fn: () => exportXps(save) }
     ])));
     acts.appendChild(mkSaveBtn("Delete", "danger", () => deleteSave(save)));
     body.appendChild(acts);
@@ -592,11 +593,41 @@ async function importSaveFile(file) {
   const F = PS2VMC.FORMAT;
   const fmt = vmc.detect(bytes);
 
-  try {
+  const run = () => {
     if (fmt === F.PSV) vmc.psvImport(bytes);
     else if (fmt === F.PSU) vmc.psuImport(bytes);
     else if (fmt === F.CBS || fmt === F.MAX || fmt === F.XPS) vmc.saveImport(bytes);
     else throw new Error("unrecognised save format");
+  };
+
+  try {
+    try {
+      run();
+    } catch (e) {
+      /* The card already holds a save of that name. Offer to replace it
+       * rather than failing, but never overwrite one without asking. */
+      if (e.code !== -1013) throw e;
+
+      const dir = vmc.saveDirName(bytes);
+      if (!dir) throw e;
+      if (!confirm("This card already has a save called \"" + dir + "\".\n\n" +
+                   "Replace it with the one in " + file.name + "? " +
+                   "The save on the card will be erased."))
+        return;
+
+      /* Replacing means erasing before writing, so keep the card as it was
+       * and put it back if the second attempt fails - otherwise a save could
+       * be deleted and not replaced. */
+      const before = vmc.imageRaw();
+      try {
+        for (const f of vmc.list("/" + dir)) if (!f.isDir) vmc.remove("/" + dir + "/" + f.name);
+        vmc.rmdir("/" + dir);
+        run();
+      } catch (e2) {
+        vmc.openCard(before);
+        throw e2;
+      }
+    }
 
     markDirty();
     render();
@@ -650,6 +681,22 @@ function exportPsv(save) {
     });
 
     download(psv, psvFileName(save.name));
+  } catch (e) {
+    toast("Could not export " + save.name + " — " + e.message, "err");
+  }
+}
+
+/**
+ * Export a save as an Xploder/SharkPort .xps.
+ *
+ * Built by the same C the CLI uses, so the two produce identical files. There
+ * is no .cbs writer (that container needs a deflate compressor) and no .max
+ * one (its header under-reports its own sizes).
+ */
+function exportXps(save) {
+  if (!isSave(save)) return;
+  try {
+    download(vmc.xpsExport(save.path), safeName(save.name, "save") + ".xps");
   } catch (e) {
     toast("Could not export " + save.name + " — " + e.message, "err");
   }

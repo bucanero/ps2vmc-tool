@@ -47,6 +47,7 @@ enum ps2vmc_cmd {
 	CMD_LIST,
 	CMD_PSU_EXPORT,
 	CMD_PSV_EXPORT,
+	CMD_XPS_EXPORT,
 	CMD_ICONS_PNG,
 	CMD_EXTRACT,
 	CMD_MCFORMAT,
@@ -90,6 +91,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --xps-import, -xps <XPS filepath>\n");
 	printf("\t --psu-export, -px <mc path> <output filepath>\n");
 	printf("\t --psv-export, -pv <mc path> <output filepath>\n");
+	printf("\t --xps-export, -xe <mc path> <output filepath>\n");
 	printf("\n");
 }
 
@@ -806,6 +808,45 @@ static int cmd_import(const char *input)
  * from the file rather than the flag, so any of the three switches accepts any
  * of the three containers.
  */
+/* Export a save as an Xploder/SharkPort .xps. */
+static int cmd_xps_export(const char *path, const char *output)
+{
+	ps2save_t save;
+	uint8_t *buf;
+	size_t len;
+	int r;
+
+	r = ps2save_read_card(path, &save);
+	if (r < 0) {
+		fprintf(stderr, "Error: can't read '%s' from the card (%d)\n", path, r);
+		return r;
+	}
+
+	printf("Exporting '%s' to %s...\n", path, output);
+
+	for (int i = 0; i < save.file_count; i++)
+		printf("Adding %s/%-40s | %8u bytes\n", save.dirname,
+			save.files[i].name, save.files[i].size);
+
+	r = ps2save_build_xps(&save, &buf, &len);
+	ps2save_free(&save);
+
+	if (r < 0) {
+		fprintf(stderr, "Error: can't build an XPS from '%s' (%d)\n", path, r);
+		return r;
+	}
+
+	if (write_buffer(output, buf, len) < 0) {
+		fprintf(stderr, "Error: can't write '%s'\n", output);
+		free(buf);
+		return -1000;
+	}
+
+	free(buf);
+	printf("Save succesfully exported to %s.\n", output);
+	return 0;
+}
+
 static int cmd_save_import(const char *input)
 {
 	ps2save_t save;
@@ -834,6 +875,13 @@ static int cmd_save_import(const char *input)
 	if (r < 0) {
 		fprintf(stderr, "Error: can't read '%s' as a PS2 save container (%d)\n", input, r);
 		return r;
+	}
+
+	if (mcio_mcStat(save.dirname, &(struct io_dirent){0}) == sceMcResSucceed) {
+		fprintf(stderr, "Error: the card already has a save named '%s'; "
+			"remove it first with --remove-directory\n", save.dirname);
+		ps2save_free(&save);
+		return PS2SAVE_ERR_EXISTS;
 	}
 
 	printf("Writing %s data to: '/%s'...\n", ps2save_format_name(fmt), save.dirname);
@@ -1095,6 +1143,14 @@ int main(int argc, char **argv)
 			cmd = CMD_PSU_EXPORT;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--xps-export") || !strcmp(argv[2], "-xe")) {
+			if (argc < 4) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_XPS_EXPORT;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--psv-export") || !strcmp(argv[2], "-pv")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
@@ -1157,6 +1213,11 @@ int main(int argc, char **argv)
 			r = cmd_psv_export(cmd_args[0], cmd_args[1]);
 			if (r < 0)
 				fprintf(stderr, "Error: can't export save to PSV... (%d)\n", r);
+		}
+		else if (cmd == CMD_XPS_EXPORT) {
+			r = cmd_xps_export(cmd_args[0], cmd_args[1]);
+			if (r < 0)
+				fprintf(stderr, "Error: can't export save to XPS... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();

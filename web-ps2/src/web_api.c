@@ -474,6 +474,36 @@ KEEP int vmc_psu_import(uint8_t *data, int size)
 }
 
 /* ------------------------------------------------------------------ */
+/* XPS export                                                         */
+/* ------------------------------------------------------------------ */
+
+/* Serialise a save as an Xploder/SharkPort .xps; caller frees the buffer. */
+KEEP uint8_t *vmc_xps_export(const char *path, int *out_len)
+{
+	ps2save_t save;
+	uint8_t *buf;
+	size_t len;
+	int r;
+
+	r = ps2save_read_card(path, &save);
+	if (r < 0) {
+		*out_len = r;
+		return NULL;
+	}
+
+	r = ps2save_build_xps(&save, &buf, &len);
+	ps2save_free(&save);
+
+	if (r < 0) {
+		*out_len = r;
+		return NULL;
+	}
+
+	*out_len = (int)len;
+	return buf;
+}
+
+/* ------------------------------------------------------------------ */
 /* Third-party containers: .cbs / .max / .xps                         */
 /* ------------------------------------------------------------------ */
 
@@ -484,6 +514,22 @@ KEEP int vmc_save_detect(uint8_t *p, int size)
 		return PS2SAVE_UNKNOWN;
 
 	return ps2save_detect(p, (size_t)size);
+}
+
+/* The directory a container would create, or "" if it cannot be read. */
+KEEP const char *vmc_save_dirname(uint8_t *p, int size)
+{
+	static char name[33];
+	ps2save_t save;
+
+	name[0] = '\0';
+
+	if (size > 0 && ps2save_parse(p, (size_t)size, &save) == 0) {
+		snprintf(name, sizeof(name), "%s", save.dirname);
+		ps2save_free(&save);
+	}
+
+	return name;
 }
 
 /* Import a .cbs/.max/.xps save. The format is detected from the data. */

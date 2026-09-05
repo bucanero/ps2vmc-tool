@@ -39,6 +39,7 @@ Available commands:
 	 --xps-import, -xps <XPS filepath>
 	 --psu-export, -px <mc path> <output filepath>
 	 --psv-export, -pv <mc path> <output filepath>
+	 --xps-export, -xe <mc path> <output filepath>
 ```
 
 ---

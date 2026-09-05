@@ -40,6 +40,7 @@
     "-1010": "not a PS2 save container",
     "-1011": "file is truncated",
     "-1012": "could not decompress the save",
+    "-1013": "the card already has a save with that name",
     "-1001": "short read",
     "-1002": "allocation failed",
     "-1003": "truncated or malformed container",
@@ -102,7 +103,9 @@
       psuImport:  Module.cwrap("vmc_psu_import", "number", ["number", "number"]),
       psvImport:  Module.cwrap("vmc_psv_import", "number", ["number", "number"]),
       saveImport: Module.cwrap("vmc_save_import", "number", ["number", "number"]),
+      xpsExport:  Module.cwrap("vmc_xps_export", "number", ["string", "number"]),
       saveDetect: Module.cwrap("vmc_save_detect", "number", ["number", "number"]),
+      saveDirName: Module.cwrap("vmc_save_dirname", "string", ["number", "number"]),
       sizeofDirent: Module.cwrap("vmc_sizeof_dirent", "number", []),
       offsetofName: Module.cwrap("vmc_offsetof_name", "number", [])
     };
@@ -314,6 +317,15 @@
         return takeBuffer(ptr, len);
       },
 
+      /** Export a save as an Xploder/SharkPort .xps. */
+      xpsExport(path) {
+        const lp = scratchPtr(4);
+        const ptr = c.xpsExport(path, lp);
+        const len = view().getInt32(lp, true);
+        if (!ptr) throw new VmcError(len, "exporting " + path);
+        return takeBuffer(ptr, len);
+      },
+
       psuImport(bytes) {
         const ptr = Module._malloc(bytes.length);
         try {
@@ -342,6 +354,17 @@
         try {
           heap().set(bytes, ptr);
           return c.saveDetect(ptr, bytes.length);
+        } finally {
+          Module._free(ptr);
+        }
+      },
+
+      /** The directory a .cbs/.max/.xps would create, or "" if unreadable. */
+      saveDirName(bytes) {
+        const ptr = Module._malloc(bytes.length || 1);
+        try {
+          heap().set(bytes, ptr);
+          return c.saveDirName(ptr, bytes.length);
         } finally {
           Module._free(ptr);
         }
