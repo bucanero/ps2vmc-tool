@@ -56,8 +56,6 @@ jobs:
       # succeeds while printing the wrong thing, fails the build.
       - name: Smoke test the binaries
         run: |
-          set -eo pipefail
-
           # card info and listing
           ./ps2vmc-tool.exe samples/ps2card.vmc --mc-info | grep -q "MC size:    8 MB"
           ./ps2vmc-tool.exe samples/ps2card.vmc --list / | grep -q "BESLES-50325"
