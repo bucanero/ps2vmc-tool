@@ -230,6 +230,51 @@ async function main() {
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });
+  /* ---------- the blank card the PS1 page can create ---------- */
+  console.log("\n=== PS1 blank card ===");
+  {
+    const r = PS1.create();
+    ok("PS1.create() makes a card", r.ok === true);
+
+    const st = PS1.stats();
+    ok("it is empty with every slot free (" + st.free + "/" + PS1.MAX_SLOTS + ")",
+       st.free === PS1.MAX_SLOTS && st.saves === 0 && st.corrupt === 0,
+       JSON.stringify(st));
+
+    const raw = PS1.exportCard(PS1.CARD.RAW);
+    ok("it exports a 128 KB raw image", raw.length === PS1.SIZE, raw.length + " bytes");
+
+    /* the native tool has to accept it, not just our own reader */
+    const p = path.join(os.tmpdir(), "ps1blank-" + process.pid + ".mcr");
+    fs.writeFileSync(p, Buffer.from(raw));
+    const cli1 = path.join(ROOT, "ps1vmc-tool");
+
+    /* and --mc-create must build the very same card */
+    if (fs.existsSync(cli1)) {
+      const cliCard = path.join(os.tmpdir(), "ps1cli-" + process.pid + ".mcr");
+      fs.rmSync(cliCard, { force: true });
+      execFileSync(cli1, [cliCard, "--mc-create"], { encoding: "utf8" });
+      const theirs = new Uint8Array(fs.readFileSync(cliCard));
+      const diff = raw.length === theirs.length
+        ? raw.findIndex((b, i) => b !== theirs[i])
+        : -2;
+      ok("ps1vmc-tool --mc-create builds the same card as the page",
+         diff === -1, diff === -2 ? "different sizes" : "first difference at 0x" + diff.toString(16));
+      fs.rmSync(cliCard, { force: true });
+    }
+    if (fs.existsSync(cli1)) {
+      const info = execFileSync(cli1, [p, "--mc-info"], { encoding: "utf8" });
+      ok("ps1vmc-tool reads it", /Data slots:\s*15/.test(info), info.split("\n")[2] || "");
+      /* A formatted card lists no rows at all: free slots are not printed,
+       * so an empty card is exactly the header and nothing else. */
+      const rows = execFileSync(cli1, [p, "--list"], { encoding: "utf8" })
+        .split("\n").filter(l => /\|/.test(l) && !/Filename/.test(l));
+      ok("ps1vmc-tool lists no saves on it", rows.length === 0,
+         rows.length + " rows: " + rows.slice(0, 2).join(" / "));
+    }
+    fs.rmSync(p, { force: true });
+  }
+
   console.log("\n" + pass + " passed, " + fail + " failed");
   process.exit(fail ? 1 : 0);
 }

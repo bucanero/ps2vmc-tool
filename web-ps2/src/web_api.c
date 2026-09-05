@@ -22,6 +22,7 @@
 #include "mcio.h"
 #include "util.h"
 #include "ps2save.h"
+#include "ps2blank.h"
 
 #define PSV_MAGIC       0x50535600
 #define KEEP            EMSCRIPTEN_KEEPALIVE
@@ -69,6 +70,25 @@ static int buf_fill(buf_t *b, uint8_t v, size_t n)
 	memset(b->p + b->len, v, n);
 	b->len += n;
 	return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* a new card                                                         */
+/* ------------------------------------------------------------------ */
+
+/* Build an empty card; caller frees. Raw, without ECC spare bytes. */
+KEEP uint8_t *vmc_blank_card(int *out_len)
+{
+	uint8_t *card;
+	size_t len;
+
+	if (ps2blank_create(&card, &len) < 0) {
+		*out_len = -1000;
+		return NULL;
+	}
+
+	*out_len = (int)len;
+	return card;
 }
 
 /* ------------------------------------------------------------------ */

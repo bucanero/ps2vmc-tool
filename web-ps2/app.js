@@ -540,6 +540,29 @@ function closeModal() {
 /* card open / close                                                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Build an empty card and open it. Nothing is downloaded: the structures are
+ * written by src/ps2blank.c - the same code behind the CLI's --mc-create -
+ * because mcio cannot format an image that is not already a card. The raw form is converted to the 528-byte-page ECC
+ * layout that real cards and emulators use.
+ */
+function newBlankCard() {
+  try {
+    state.info = vmc.openCard(vmc.blankCard());
+    state.info = vmc.openCard(vmc.imageEcc());
+
+    state.fileName = "new-card.ps2";
+    markDirty();
+    $("dropzone").style.display = "none";
+    $("cardview").classList.add("on");
+    render();
+    toast("Created a blank formatted card — " +
+          Math.round(state.info.cardSize / 1024 / 1024) + " MB", "ok");
+  } catch (e) {
+    toast("Could not create a blank card — " + e.message, "err");
+  }
+}
+
 async function loadCard(file) {
   let bytes;
   try {
@@ -757,6 +780,7 @@ async function injectFile(file) {
 
 function wire() {
   $("btn-open").addEventListener("click", () => $("file-card").click());
+  $("btn-new").addEventListener("click", newBlankCard);
   $("file-card").addEventListener("change", e => {
     if (e.target.files[0]) loadCard(e.target.files[0]);
     e.target.value = "";

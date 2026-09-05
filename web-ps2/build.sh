@@ -29,6 +29,7 @@ emcc \
 	"$ROOT/src/mcio.c" \
 	"$ROOT/src/util.c" \
 	"$ROOT/src/ps2save.c" \
+	"$ROOT/src/ps2blank.c" \
 	"$ROOT/src/lzari.c" \
 	"$ROOT/src/miniz_tinfl.c" \
 	src/web_api.c \

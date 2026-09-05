@@ -106,6 +106,7 @@
       xpsExport:  Module.cwrap("vmc_xps_export", "number", ["string", "number"]),
       saveDetect: Module.cwrap("vmc_save_detect", "number", ["number", "number"]),
       saveDirName: Module.cwrap("vmc_save_dirname", "string", ["number", "number"]),
+      blankCard:  Module.cwrap("vmc_blank_card", "number", ["number"]),
       sizeofDirent: Module.cwrap("vmc_sizeof_dirent", "number", []),
       offsetofName: Module.cwrap("vmc_offsetof_name", "number", [])
     };
@@ -185,6 +186,20 @@
       errText,
 
       /* ---- card ---- */
+
+      /**
+       * Build an empty 8 MB card image, raw and without ECC spare bytes.
+       * Written by src/ps2blank.c, the same code behind the CLI's
+       * --mc-create, because mcio cannot format an image that is not
+       * already a card.
+       */
+      blankCard() {
+        const lp = scratchPtr(4);
+        const ptr = c.blankCard(lp);
+        const len = view().getInt32(lp, true);
+        if (!ptr) throw new VmcError(len, "building a blank card");
+        return takeBuffer(ptr, len);
+      },
 
       /** Load a .vmc/.ps2/.mcd image. Returns card info; throws VmcError. */
       openCard(bytes) {
@@ -452,6 +467,7 @@
     const Module = await make(bin ? { wasmBinary: bin } : {});
     return create(Module);
   }
+
 
   return { load, ATTR, FORMAT, FORMAT_NAME, errText, VmcError };
 });

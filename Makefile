@@ -29,7 +29,7 @@ PS1_SRC	=	src/ps1main.c src/ps1card.c src/sha256.c $(COMMON_SRC)
 
 # PS2 only: the mcio filesystem, the 3D icon decoder, and the readers for
 # third-party save containers (LZARI for .max, inflate for .cbs)
-PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c src/ps2save.c \
+PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c src/ps2save.c src/ps2blank.c \
 		src/lzari.c src/miniz_tinfl.c $(COMMON_SRC)
 
 PS1_OBJ	=	$(PS1_SRC:.c=.o)

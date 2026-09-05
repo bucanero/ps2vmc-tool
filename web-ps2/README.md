@@ -41,6 +41,7 @@ backend, just ten static files, all of them plain text.
 | `--mc-image` | *Download card ▾ → Raw, ECC stripped* |
 | `--ecc-image` | *Download card ▾ → With ECC spare* |
 | `--mc-format` | *Format card* |
+| `--mc-create` | *New blank card* — start with no card file at all |
 | `--icons-png` | *texture .png* in the icon bar |
 | *(not in the CLI)* | 3D icon on every save card, animated on hover |
 | *(not in the CLI)* | Animated 3D icon viewer, drag to orbit |
@@ -94,6 +95,33 @@ module is built with `-s FILESYSTEM=0`. What keeps the C and the JS honest
 instead is `test/psv.js`, which runs the real `--psv-export` and asserts the
 CLI's bytes and ours match exactly, signature included.
 
+### Where the blank card comes from
+
+*New blank card* builds one. `src/ps2blank.c` writes the superblock, the
+indirect FAT, the FAT and the root directory straight into an empty buffer, the
+way [mymc](https://github.com/ps2dev/mymc) does, and leaves everything else at
+`0xFF` — the erased state for these cards, whose flags do not set
+`CF_ERASE_ZEROES`. The page then converts it to the 528-byte-page ECC layout
+that real cards and emulators use, with `imageEcc()`.
+
+That file is compiled into both builds, so the page's button and the CLI's
+`--mc-create` emit the same bytes; `difftest.js` compares them and allows a
+difference only in the two directory timestamps.
+
+It has to be built rather than formatted: `mcio_mcFormat()` only works on an
+image that is already a card. `Card_Format` probes every block with a flash-like
+erase and verify cycle, which a plain buffer never passes — every combination of
+fill byte and card flags returns `-2` or `-13`, one of them segfaults the CLI on
+`0xFFFFFFFF` pointer fields, and even a real card's first 512 KB followed by
+filler fails, because the probe reaches the backup blocks at the far end.
+
+Formatting an existing card is also not a way to make a *blank* one:
+`--mc-format` rebuilds the FAT and the root directory but never erases the
+allocation area, so a card blanked that way still carries the previous save
+data — around 540 KB of it on the sample card, `icon.sys` strings and all. A
+built card has none of that, and `difftest.js` checks that everything past the
+structures is `0xFF`.
+
 ### Why the module is base64 and not a .wasm file
 
 Two properties are worth having at once: every shipped file should be plain
@@ -129,11 +157,11 @@ brew install emscripten     # or apt install emscripten
 All four suites need the native tools built first (`make`):
 
 ```bash
-node web-ps2/test/difftest.js    # wasm vs CLI, 92 checks
+node web-ps2/test/difftest.js    # wasm vs CLI, 102 checks
 node web-ps2/test/icontest.js    # icon parsing and animation, 25 checks
-node web-ps2/test/hexedit.js     # hex editing on both cards, 38 checks
-node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 103 checks
-node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers and the XPS writer, 37 checks
+node web-ps2/test/hexedit.js     # hex editing on both cards, 44 checks
+node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 104 checks
+node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers and the XPS writer, 38 checks
 ```
 
 `difftest.js` runs each operation twice — once through the wasm module, once
@@ -265,6 +293,20 @@ failed; it came out of the divide-by-24 loop at `0x4093c1` in
 `PS2SaveConverter.exe`. The three `.xps` files in `samples/` were written by
 three different tools and all three verify, so this is the format's checksum
 rather than one writer's habit.
+
+[mymcplusplus](https://github.com/Adubbz/mymcplusplus) has the same routine in
+`save/format_sharkport.py`, commented out and unused — `h += c << (h % 24)`,
+masked to 32 bits. It agrees with ours on every sample and on the files we
+write, which is a second, independent source for an algorithm that was
+otherwise only readable in a disassembly.
+
+### Descriptors carry their own size
+
+Every `.xps` seen uses 250-byte descriptors, but the size is a field in each
+one, and only its first 98 bytes hold anything this reader wants. So the
+descriptor's own size is what advances the cursor, the way mymcplusplus does
+it, rather than a hard-coded 250 — `savefmt.js` rebuilds a real save with
+300-byte descriptors and checks the same files come back out.
 
 ### Three description strings, not two
 

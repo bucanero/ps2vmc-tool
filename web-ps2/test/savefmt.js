@@ -278,6 +278,52 @@ async function main() {
   const oneXps = vmc.xpsExport("/" + saves[0]);
   ok("an exported .xps is identified as XPS", vmc.detect(oneXps) === F.XPS);
 
+  /* ---------- 3b. descriptors that are not 250 bytes ---------- */
+  console.log("\n=== .xps descriptors carry their own size ===");
+  {
+    /* Every file seen uses 250, but the size is a field, and mymcplusplus
+     * honours it. Rebuild a real save with wider descriptors and check we
+     * read exactly the same files out of it. */
+    const src = containers.find(f => /\.xps$/i.test(f));
+    const b = fs.readFileSync(path.join(SAMPLES, src));
+    const L = xpsLayout(b);
+    const WIDE = 300;
+
+    const parts = [b.subarray(0, L.body)];
+    let off = L.body, n = b.readUInt32LE(L.body + 66) - 2;
+    const widen = () => {
+      const e = Buffer.alloc(WIDE);
+      b.copy(e, 0, off, off + XPS_ENTRY);
+      e.writeUInt16LE(WIDE, 0);              /* the descriptor's own size */
+      parts.push(e);
+      off += XPS_ENTRY;
+    };
+    widen();                                  /* the directory entry */
+    for (let i = 0; i < n; i++) {
+      const len = b.readUInt32LE(off + 66);
+      widen();
+      parts.push(b.subarray(off, off + len));
+      off += len;
+    }
+    const wide = Buffer.concat(parts);
+
+    const readBack = (bytes) => {
+      vmc.openCard(blankCard("wide" + bytes.length));
+      vmc.saveImport(new Uint8Array(bytes));
+      const dir = vmc.list("/").filter(e => e.isDir && !isDot(e.name))[0].name;
+      return vmc.list("/" + dir).filter(e => !e.isDir).map(e =>
+        e.name + ":" + Buffer.from(vmc.readFile("/" + dir + "/" + e.name)).toString("hex").slice(0, 32));
+    };
+
+    let err = null, same = false;
+    try {
+      same = JSON.stringify(readBack(wide)) === JSON.stringify(readBack(b));
+    } catch (e) { err = e.message; }
+
+    ok("a save with " + WIDE + "-byte descriptors reads the same as the 250-byte original",
+       same && !err, err || "file lists differ");
+  }
+
   /* ---------- 4. malformed input ---------- */
   console.log("\n=== malformed containers are rejected ===");
 

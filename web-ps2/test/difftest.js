@@ -279,6 +279,70 @@ async function main() {
     }
   }
 
+  /* ---------- the blank card the page can create ---------- */
+  console.log("\n=== built-in blank card ===");
+  {
+    const blank = vmc.blankCard();
+    ok("blankCard() returns an 8 MB raw image", blank.length === 8 * 1024 * 1024,
+       blank.length + " bytes");
+
+    /* the page and the CLI must build the same card - same code, so the only
+     * difference allowed is the timestamp in the two directory entries */
+    const cliBlank = path.join(tmp, "cli-created.vmc");
+    cli(cliBlank, ["--mc-create"]);
+    const theirs = new Uint8Array(fs.readFileSync(cliBlank));
+    const rootAt = 49 * 1024;
+    const differing = [];
+    for (let i = 0; i < blank.length; i++)
+      if (blank[i] !== theirs[i]) differing.push(i);
+    const onlyStamps = differing.every(i => {
+      const off = i - rootAt;
+      return off >= 0 && off < 1024 &&
+             ((off % 512) >= 8 && (off % 512) < 16 ||
+              (off % 512) >= 24 && (off % 512) < 32);
+    });
+    ok("--mc-create builds the same card as the page (" + differing.length +
+       " bytes differ, all timestamps)", onlyStamps,
+       differing.slice(0, 5).map(i => "0x" + i.toString(16)).join(", "));
+
+    const info = vmc.openCard(blank);
+    ok("the wasm opens it as an 8 MB card",
+       Math.round(info.cardSize / 1024 / 1024) === 8, info.cardSize + " bytes");
+    ok("it is formatted and completely empty",
+       Math.round(vmc.freeSpace() / 1024) === 8000 &&
+       vmc.list("/").filter(e => e.isDir && e.name !== "." && e.name !== "..").length === 0,
+       Math.round(vmc.freeSpace() / 1024) + " KB free");
+
+    /* the page hands the user the ECC form, so that has to work too */
+    const eccInfo = vmc.openCard(vmc.imageEcc());
+    ok("its ECC form opens as an 8 MB card with ECC",
+       eccInfo.usesEcc && Math.round(eccInfo.cardSize / 1024 / 1024) === 8,
+       eccInfo.cardSize + " bytes, ecc=" + eccInfo.usesEcc);
+
+    /* and the native tool must accept it, not just our own reader */
+    for (const [tag, bytes] of [["raw", blank], ["ECC", vmc.cardBytes()]]) {
+      const p = path.join(tmp, "blank-" + tag + ".vmc");
+      fs.writeFileSync(p, Buffer.from(bytes));
+      ok("the CLI reads the " + tag + " blank card as 8 MB free",
+         /MC size:\s+8 MB/.test(cli(p, ["--mc-info"])) && /8000 KB/.test(cli(p, ["--mc-free"])));
+
+      /* it must be usable, not merely readable */
+      const psu = path.join(tmp, "blank-src.psu");
+      cli(path.join(ROOT, "samples", "ps2card.vmc"), ["--psu-export", "/APOLLO-99PS2", psu]);
+      cli(p, ["--import", psu]);
+      ok("a save imports onto the " + tag + " blank card and lists back",
+         /icon\.sys/.test(cli(p, ["--list", "/APOLLO-99PS2"])));
+    }
+
+    /* a freshly built card must carry no traces of anything else: --mc-format
+     * only rebuilds the FAT and root directory, so a card blanked that way
+     * still holds the old save data in its allocation area. */
+    const cardSb = 49 * 1024 + 33 * 1024;      /* past superblock, IFC and FAT */
+    const tail = blank.subarray(cardSb + 1024);
+    ok("everything past the structures is erased (0xFF)",
+       tail.every(b => b === 0xFF), "first non-0xFF at " + tail.findIndex(b => b !== 0xFF));
+  }
+
   console.log("\n" + pass + " passed, " + fail + " failed");
   fs.rmSync(tmp, { recursive: true, force: true });
   process.exit(fail ? 1 : 0);

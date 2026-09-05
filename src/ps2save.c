@@ -462,10 +462,37 @@ static int parse_max(const uint8_t *buf, size_t len, ps2save_t *out)
 /* Xploder / SharkPort (.xps)                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Read one descriptor and report how far the next one is. Only the first 98
+ * bytes are ever used, and the descriptor carries its own size, so a writer
+ * that uses a different one still parses - mymcplusplus does the same. Real
+ * files all say 250.
+ */
+#define XPS_ENTRY_USED  98
+
+static int xps_read_entry(const uint8_t *buf, size_t len, size_t off,
+			  xps_entry_t *e, size_t *step)
+{
+	uint16_t sz;
+
+	if (off + XPS_ENTRY_USED > len)
+		return PS2SAVE_ERR_TRUNCATED;
+
+	memset(e, 0, sizeof(*e));
+	memcpy(e, buf + off, XPS_ENTRY_USED);
+
+	sz = e->entry_sz;
+	if (sz < XPS_ENTRY_USED || off + sz > len)
+		return PS2SAVE_ERR_TRUNCATED;
+
+	*step = sz;
+	return 0;
+}
+
 static int parse_xps(const uint8_t *buf, size_t len, ps2save_t *out)
 {
 	xps_entry_t entry;
-	size_t off = 0x15;
+	size_t off = 0x15, step;
 	int i, r, count;
 
 	if (len < 0x15 || memcmp(buf + 4, XPS_MAGIC, 16) != 0)
@@ -498,10 +525,10 @@ static int parse_xps(const uint8_t *buf, size_t len, ps2save_t *out)
 		return PS2SAVE_ERR_TRUNCATED;
 	off += 4;                              /* size of the body that follows */
 
-	if (off + sizeof(entry) > len)
-		return PS2SAVE_ERR_TRUNCATED;
-	memcpy(&entry, buf + off, sizeof(entry));
-	off += sizeof(entry);
+	r = xps_read_entry(buf, len, off, &entry, &step);
+	if (r < 0)
+		return r;
+	off += step;
 
 	/* The directory entry counts "." and ".." among its children. */
 	if (entry.length < 2)
@@ -518,12 +545,12 @@ static int parse_xps(const uint8_t *buf, size_t len, ps2save_t *out)
 	out->modified = entry.modified;
 
 	for (i = 0; i < count; i++) {
-		if (off + sizeof(entry) > len) {
+		r = xps_read_entry(buf, len, off, &entry, &step);
+		if (r < 0) {
 			ps2save_free(out);
-			return PS2SAVE_ERR_TRUNCATED;
+			return r;
 		}
-		memcpy(&entry, buf + off, sizeof(entry));
-		off += sizeof(entry);
+		off += step;
 
 		if (entry.length > SANE_FILE_SIZE || off + entry.length > len) {
 			ps2save_free(out);

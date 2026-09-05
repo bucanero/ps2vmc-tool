@@ -24,6 +24,7 @@ Available commands:
 	 --mc-image, -img <output filepath>
 	 --ecc-image, -ecc <output filepath>
 	 --mc-format
+	 --mc-create, -new  (write a new empty card to <VMC filepath>)
 	 --list, -ls <mc path>
 	 --icons-png <mc path>
 	 --extract-file, -x <mc filepath> <output filepath>
@@ -47,7 +48,7 @@ PS1VMC Tool is a command-line application for managing PS1 virtual memory cards 
 ## Usage
 
 ```
-PS1VMC-TOOL v1.0.0
+PS1VMC-TOOL v1.1.0
 Copyright (C) 2024 - by Bucanero
 based on MemcardRex by ShendoXT
 
@@ -58,6 +59,7 @@ Available commands:
 	 --mc-info, -i
 	 --mc-free, -f
 	 --mc-format
+	 --mc-create, -new  (write a new empty card to <MC filepath>)
 	 --list, -ls
 	 --remove, -rm <slot #>
 	 --icons <slot #>

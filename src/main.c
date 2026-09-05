@@ -31,6 +31,7 @@
 #include "ps2icon.h"
 #include "psv_resign.h"
 #include "ps2save.h"
+#include "ps2blank.h"
 #include "svpng.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
@@ -51,6 +52,7 @@ enum ps2vmc_cmd {
 	CMD_ICONS_PNG,
 	CMD_EXTRACT,
 	CMD_MCFORMAT,
+	CMD_MCCREATE,
 	CMD_INJECT,
 	CMD_MKDIR,
 	CMD_RMDIR,
@@ -74,6 +76,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --mc-image, -img <output filepath>\n");
 	printf("\t --ecc-image, -ecc <output filepath>\n");
 	printf("\t --mc-format\n");
+	printf("\t --mc-create, -new  (write a new empty card to <VMC filepath>)\n");
 	printf("\t --list, -ls <mc path>\n");
 	printf("\t --icons-png <mc path>\n");
 	printf("\t --extract-file, -x <mc filepath> <output filepath>\n");
@@ -1059,6 +1062,9 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[2], "--mc-format")) {
 			cmd = CMD_MCFORMAT;
 		}
+		else if (!strcmp(argv[2], "--mc-create") || !strcmp(argv[2], "-new")) {
+			cmd = CMD_MCCREATE;
+		}
 		else if (!strcmp(argv[2], "--list") || !strcmp(argv[2], "-ls")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
@@ -1169,6 +1175,31 @@ int main(int argc, char **argv)
 			print_usage(argc, argv);
 			return 1;
 		}
+	}
+
+	/* Creating a card is the one command with no card to open: argv[1] is the
+	 * file about to be written, and it is not expected to exist. */
+	if (cmd == CMD_MCCREATE) {
+		uint8_t *blank;
+		size_t blank_len;
+
+		if (ps2blank_create(&blank, &blank_len) < 0) {
+			fprintf(stderr, "Error: can't build a new memory card\n");
+			return 1;
+		}
+
+		printf("Creating a new %d MB memory card...\n",
+			(int)(blank_len / 1024 / 1024));
+
+		if (write_buffer(argv[1], blank, blank_len) < 0) {
+			fprintf(stderr, "Error: can't write '%s'\n", argv[1]);
+			free(blank);
+			return 1;
+		}
+
+		free(blank);
+		printf("VMC file saved: %s\n", argv[1]);
+		return 0;
 	}
 
 	if (read_buffer(argv[1], &data, &dsize) < 0) {
