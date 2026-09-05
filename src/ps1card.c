@@ -869,13 +869,23 @@ static bool ends_with_ci(const char* s, const char* suffix)
     return true;
 }
 
+//Path separators to split a file name on. Windows accepts both, so a Windows
+//build has to honour either - the bug report's own command line used '/'.
+//Everywhere else '\\' is a legal character in a file name, and treating it as
+//a separator would cut a real name short.
+#ifdef _WIN32
+#define PATH_SEPARATORS     "/\\"
+#else
+#define PATH_SEPARATORS     "/"
+#endif
+
 //A raw single save carries no header, so the file name is the only place its
 //name can come from - and that name is the directory frame's region, product
 //code and identifier, not decoration. Two things have to be stripped off it:
 //
-//  - the directory. Looking only for '/' left Windows paths untouched, since
-//    they separate with '\\', so the whole path went into the name field and
-//    the product code came out of the directory name.
+//  - the directory. Only looking for '/' left Windows paths untouched, so the
+//    whole path went into the name field and the product code came out of the
+//    directory name.
 //  - a ".raw"/".ps1" extension an extractor may have added. Only those two:
 //    a PS1 identifier may legitimately contain a dot, so any other name is
 //    taken as it stands.
@@ -887,7 +897,7 @@ static void get_save_name_from_path(const char* path, char* out, size_t outsz)
     size_t len;
 
     for (p = path; *p; p++)
-        if (*p == '/' || *p == '\\')
+        if (strchr(PATH_SEPARATORS, *p))
             name = p + 1;
 
     strncpy(out, name, outsz - 1);

@@ -52,6 +52,8 @@ enum ps1vmc_cmd {
 	CMD_MCCREATE,
 	CMD_INJECT,
 	CMD_REMOVE,
+	CMD_DELETE,
+	CMD_UNDELETE,
 };
 
 
@@ -70,6 +72,8 @@ static void print_usage(int argc, char **argv)
 	printf("\t --mc-create, -new  (write a new empty card to <MC filepath>)\n");
 	printf("\t --list, -ls\n");
 	printf("\t --remove, -rm <slot #>\n");
+	printf("\t --delete, -del <slot #>  (recoverable, as the console does)\n");
+	printf("\t --undelete, -undel <slot #>\n");
 	printf("\t --icons <slot #>\n");
 	printf("\t --raw-image, -raw <output filepath>\n");
 	printf("\t --gme-image, -gme <output filepath>\n");
@@ -221,6 +225,7 @@ static int cmd_mcformat(void)
 static const char *slot_type_name(uint8_t type)
 {
 	switch (type) {
+	case PS1BLOCK_FORMATTED:          return "<empty>";
 	case PS1BLOCK_INITIAL:            return "<save>";
 	case PS1BLOCK_MIDDLELINK:
 	case PS1BLOCK_ENDLINK:            return "<link>";
@@ -305,6 +310,55 @@ static int cmd_psv_export(const char *slot)
 		return -1001;
 
 	printf("Save exported to: '%s'\n", filename);
+	return 0;
+}
+
+/*
+ * The console does not wipe a save when you delete it: it flips the block type
+ * to its deleted counterpart and leaves the name and data in place, which is
+ * what makes a save recoverable until something else claims the blocks.
+ * toggleDeleteSave() walks the whole link chain and flips every block in it.
+ *
+ * --remove is the other thing, and stays as it was: formatSave() clears the
+ * blocks outright, and nothing can bring that back.
+ */
+static int cmd_delete(const char *slot, int undelete)
+{
+	int id = strtol(slot, NULL, 10);
+	ps1mcData_t* mcdata = getMemoryCardData();
+	uint8_t type;
+
+	if (!mcdata)
+		return -1000;
+
+	if (id < 0 || id >= PS1CARD_MAX_SLOTS) {
+		fprintf(stderr, "Error: slot %d is out of range (0-%d)\n",
+			id, PS1CARD_MAX_SLOTS - 1);
+		return -1000;
+	}
+
+	type = mcdata[id].saveType;
+
+	/* Only the first block of a save is addressable: the rest follow it. */
+	if (type != PS1BLOCK_INITIAL && type != PS1BLOCK_DELETED_INITIAL) {
+		fprintf(stderr, "Error: slot %d holds no save (%s)\n",
+			id, slot_type_name(type));
+		return -1000;
+	}
+
+	if (undelete && type != PS1BLOCK_DELETED_INITIAL) {
+		fprintf(stderr, "Error: the save in slot %d is not deleted\n", id);
+		return -1000;
+	}
+
+	if (!undelete && type == PS1BLOCK_DELETED_INITIAL) {
+		fprintf(stderr, "Error: the save in slot %d is already deleted\n", id);
+		return -1000;
+	}
+
+	printf("%s '%s'...\n", undelete ? "Restoring" : "Deleting", mcdata[id].saveName);
+	toggleDeleteSave(id);
+
 	return 0;
 }
 
@@ -414,6 +468,22 @@ int main(int argc, char **argv)
 			cmd = CMD_REMOVE;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--delete") || !strcmp(argv[2], "-del")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_DELETE;
+			cmd_args = &argv[3];
+		}
+		else if (!strcmp(argv[2], "--undelete") || !strcmp(argv[2], "-undel")) {
+			if (argc < 3) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_UNDELETE;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--icons")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
@@ -519,6 +589,11 @@ int main(int argc, char **argv)
 				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)
 				fprintf(stderr, "Error: can't remove file '%s'... (%d)\n", cmd_args[0], r);
+		}
+		else if (cmd == CMD_DELETE || cmd == CMD_UNDELETE) {
+			r = cmd_delete(cmd_args[0], cmd == CMD_UNDELETE);
+			if (r == 99999)
+				fprintf(stderr, "Error: memory card is not formatted!\n");
 		}
 		else if (cmd == CMD_AR_EXPORT || cmd == CMD_MCS_EXPORT || cmd == CMD_RAW_EXPORT) {
 			r = cmd_export(cmd_args[0], cmd_args[1], cmd - 8);

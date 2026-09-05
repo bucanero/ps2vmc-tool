@@ -64,6 +64,8 @@ Available commands:
 	 --mc-create, -new  (write a new empty card to <MC filepath>)
 	 --list, -ls
 	 --remove, -rm <slot #>
+	 --delete, -del <slot #>  (recoverable, as the console does)
+	 --undelete, -undel <slot #>
 	 --icons <slot #>
 	 --raw-image, -raw <output filepath>
 	 --gme-image, -gme <output filepath>
