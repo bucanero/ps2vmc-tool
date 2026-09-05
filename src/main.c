@@ -881,9 +881,9 @@ static int cmd_import(const char *input)
 }
 
 /*
- * Import a third-party save container (.cbs/.max/.xps). The format is detected
- * from the file rather than the flag, so any of the three switches accepts any
- * of the three containers.
+ * Import a save file (PSU/PSV/CBS/MAX/XPS). The format is detected from the file
+ * contents, so --import and the legacy --psu-import/--psv-import flags all land
+ * in the same code path.
  */
 /*
  * Export a save as one of the third-party containers. The two differ only in
@@ -924,7 +924,7 @@ static int cmd_save_export(const char *path, const char *output, const char *fmt
 	}
 
 	free(buf);
-	printf("Save succesfully exported to %s.\n", output);
+	printf("Save successfully exported to %s.\n", output);
 	return 0;
 }
 
