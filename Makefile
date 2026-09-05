@@ -19,7 +19,11 @@ CC	=	gcc
 # tiny-AES compiles ECB out unless asked for it, and the PSV/VMP salt
 # derivation needs it.
 CFLAGS	=	-g -O3 -W -I./include -I. -D_GNU_SOURCE -DECB=1
-#LDFLAGS =	-lz
+
+# Only the PS2 tool needs zlib: .cbs bodies are deflate-compressed, both ways.
+# Override to force the static archive, as the Windows builds do:
+#     make PS2_LIBS=-l:libz.a
+PS2_LIBS ?=	-lz
 
 # Shared: byte helpers, AES, and the PSV/VMP signature (HMAC-SHA1 over SHA-1)
 COMMON_SRC =	src/util.c src/aes.c src/sha1.c src/hmac.c src/psv_resign.c
@@ -27,8 +31,10 @@ COMMON_SRC =	src/util.c src/aes.c src/sha1.c src/hmac.c src/psv_resign.c
 # PS1 only: the card format, plus SHA-256 for .mcx images
 PS1_SRC	=	src/ps1main.c src/ps1card.c src/sha256.c $(COMMON_SRC)
 
-# PS2 only: the mcio filesystem and the 3D icon decoder
-PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c $(COMMON_SRC)
+# PS2 only: the mcio filesystem, the 3D icon decoder, and the readers for
+# third-party save containers (LZARI for .max; .cbs uses zlib, see PS2_LIBS)
+PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c src/ps2save.c src/ps2blank.c \
+		src/lzari.c $(COMMON_SRC)
 
 PS1_OBJ	=	$(PS1_SRC:.c=.o)
 PS2_OBJ	=	$(PS2_SRC:.c=.o)
@@ -44,7 +50,7 @@ $(PS1TOOL): $(PS1_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(PS2TOOL): $(PS2_OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(PS2_LIBS)
 
 # -MMD -MP records which headers each object used, so editing a header
 # rebuilds whatever depends on it instead of leaving a stale object behind.

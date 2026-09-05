@@ -313,7 +313,10 @@ function render() {
     acts.appendChild(mkSaveBtn("Export \u25be", "", (btn) => popMenu(btn, [
       { lbl: "Export save as" },
       { text: "PSU  (uLaunchELF / EMS)", fn: () => exportPsu(save) },
-      { text: "PSV  (PS3, signed)", fn: () => exportPsv(save) }
+      { text: "PSV  (PS3, signed)", fn: () => exportPsv(save) },
+      { text: "XPS  (Xploder / SharkPort)", fn: () => exportContainer(save, "xps") },
+      { text: "CBS  (CodeBreaker)", fn: () => exportContainer(save, "cbs") },
+      { text: "MAX  (Action Replay)", fn: () => exportContainer(save, "max") }
     ])));
     acts.appendChild(mkSaveBtn("Delete", "danger", () => deleteSave(save)));
     body.appendChild(acts);
@@ -539,6 +542,29 @@ function closeModal() {
 /* card open / close                                                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Build an empty card and open it. Nothing is downloaded: the structures are
+ * written by src/ps2blank.c - the same code behind the CLI's --mc-create -
+ * because mcio cannot format an image that is not already a card. The raw form is converted to the 528-byte-page ECC
+ * layout that real cards and emulators use.
+ */
+function newBlankCard() {
+  try {
+    state.info = vmc.openCard(vmc.blankCard());
+    state.info = vmc.openCard(vmc.imageEcc());
+
+    state.fileName = "new-card.ps2";
+    markDirty();
+    $("dropzone").style.display = "none";
+    $("cardview").classList.add("on");
+    render();
+    toast("Created a blank formatted card — " +
+          Math.round(state.info.cardSize / 1024 / 1024) + " MB", "ok");
+  } catch (e) {
+    toast("Could not create a blank card — " + e.message, "err");
+  }
+}
+
 async function loadCard(file) {
   let bytes;
   try {
@@ -587,14 +613,50 @@ async function importSaveFile(file) {
     bytes = await readFileBytes(file);
   } catch (e) { toast(e.message, "err"); return; }
 
-  const isPsv = bytes.length > 4 && bytes[0] === 0x00 && bytes[1] === 0x56 &&
-                bytes[2] === 0x53 && bytes[3] === 0x50;
+  /* The container is identified from its contents, not its extension: the
+   * same wasm code decides here and in the CLI. */
+  const F = PS2VMC.FORMAT;
+  const fmt = vmc.detect(bytes);
+
+  const run = () => {
+    if (fmt === F.PSV) vmc.psvImport(bytes);
+    else if (fmt === F.PSU) vmc.psuImport(bytes);
+    else if (fmt === F.CBS || fmt === F.MAX || fmt === F.XPS) vmc.saveImport(bytes);
+    else throw new Error("unrecognised save format");
+  };
+
   try {
-    if (isPsv) vmc.psvImport(bytes);
-    else vmc.psuImport(bytes);
+    try {
+      run();
+    } catch (e) {
+      /* The card already holds a save of that name. Offer to replace it
+       * rather than failing, but never overwrite one without asking. */
+      if (e.code !== -1013) throw e;
+
+      const dir = vmc.saveDirName(bytes);
+      if (!dir) throw e;
+      if (!confirm("This card already has a save called \"" + dir + "\".\n\n" +
+                   "Replace it with the one in " + file.name + "? " +
+                   "The save on the card will be erased."))
+        return;
+
+      /* Replacing means erasing before writing, so keep the card as it was
+       * and put it back if the second attempt fails - otherwise a save could
+       * be deleted and not replaced. */
+      const before = vmc.imageRaw();
+      try {
+        for (const f of vmc.list("/" + dir)) if (!f.isDir) vmc.remove("/" + dir + "/" + f.name);
+        vmc.rmdir("/" + dir);
+        run();
+      } catch (e2) {
+        vmc.openCard(before);
+        throw e2;
+      }
+    }
+
     markDirty();
     render();
-    toast("Imported " + file.name + " (" + (isPsv ? "PSV" : "PSU") + ")", "ok");
+    toast("Imported " + file.name + " (" + PS2VMC.FORMAT_NAME[fmt] + ")", "ok");
   } catch (e) {
     toast("Could not import " + file.name + " — " + e.message, "err");
   }
@@ -644,6 +706,22 @@ function exportPsv(save) {
     });
 
     download(psv, psvFileName(save.name));
+  } catch (e) {
+    toast("Could not export " + save.name + " — " + e.message, "err");
+  }
+}
+
+/**
+ * Export a save as one of the third-party containers.
+ *
+ * Built by the same C the CLI uses, so the two produce identical files.
+ */
+function exportContainer(save, ext) {
+  if (!isSave(save)) return;
+  const build = { xps: vmc.xpsExport, cbs: vmc.cbsExport, max: vmc.maxExport };
+  try {
+    download(build[ext].call(vmc, save.path),
+             safeName(save.name, "save") + "." + ext);
   } catch (e) {
     toast("Could not export " + save.name + " — " + e.message, "err");
   }
@@ -704,6 +782,7 @@ async function injectFile(file) {
 
 function wire() {
   $("btn-open").addEventListener("click", () => $("file-card").click());
+  $("btn-new").addEventListener("click", newBlankCard);
   $("file-card").addEventListener("change", e => {
     if (e.target.files[0]) loadCard(e.target.files[0]);
     e.target.value = "";

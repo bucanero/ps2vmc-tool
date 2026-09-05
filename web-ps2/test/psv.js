@@ -136,10 +136,25 @@ function main() {
     ok(name + ": every documented option is accepted (" + advertised.length + " checked)",
        missing.length === 0, "not parsed: " + missing.join(", "));
 
-    /* and nothing is parsed that the usage text never mentions */
-    const undocumented = [...parsed].filter(o => !advertised.includes(o));
+    /* and nothing is parsed that the usage text never mentions, except the
+     * old short options kept so existing scripts keep working */
+    const DEPRECATED = { "ps2vmc-tool": ["--psu-import", "-pu",
+                                        "--psv-import", "-pi",
+                                        "-px", "-pv"] };
+    const allowed = DEPRECATED[name] || [];
+    const undocumented = [...parsed].filter(o => !advertised.includes(o) && !allowed.includes(o));
     ok(name + ": no undocumented options in the parser",
        undocumented.length === 0, "not documented: " + undocumented.join(", "));
+
+    /* the deprecated ones must still be accepted, and must stay unadvertised */
+    const goneFromParser = allowed.filter(o => !parsed.has(o));
+    const leakedToUsage = allowed.filter(o => advertised.includes(o));
+    if (allowed.length)
+      ok(name + ": " + allowed.join("/") + " still accepted but not advertised",
+         goneFromParser.length === 0 && leakedToUsage.length === 0,
+         [goneFromParser.length ? "dropped: " + goneFromParser.join(", ") : "",
+          leakedToUsage.length ? "re-advertised: " + leakedToUsage.join(", ") : ""]
+           .filter(Boolean).join("; "));
   }
 
   /* ---------- 2. SHA-1 ---------- */

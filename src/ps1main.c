@@ -49,6 +49,7 @@ enum ps1vmc_cmd {
 	CMD_PSV_EXPORT,
 	CMD_ICONS,
 	CMD_MCFORMAT,
+	CMD_MCCREATE,
 	CMD_INJECT,
 	CMD_REMOVE,
 };
@@ -66,6 +67,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --mc-info, -i\n");
 	printf("\t --mc-free, -f\n");
 	printf("\t --mc-format\n");
+	printf("\t --mc-create, -new  (write a new empty card to <MC filepath>)\n");
 	printf("\t --list, -ls\n");
 	printf("\t --remove, -rm <slot #>\n");
 	printf("\t --icons <slot #>\n");
@@ -161,6 +163,31 @@ static int cmd_mcfree(void)
 			cardfree++;
 
 	printf("Available space: %d Blocks\n", cardfree);
+	return 0;
+}
+
+/*
+ * Write a new, empty card. There is nothing to open first: argv[1] is the file
+ * about to be created. A zeroed buffer is handed to the card engine with
+ * fixData set, so the signature and checksums are rebuilt, then every slot is
+ * formatted - the same sequence the web page uses.
+ */
+static int cmd_mccreate(const char *output)
+{
+	uint8_t blank[PS1CARD_SIZE];
+
+	memset(blank, 0, sizeof(blank));
+	openMemoryCardStream(blank, 1);
+	formatMemoryCard();
+
+	printf("Creating a new %d KB memory card...\n", PS1CARD_SIZE / 1024);
+
+	if (!saveMemoryCard(output, PS1CARD_RAW, 1)) {
+		fprintf(stderr, "Error: can't write '%s'\n", output);
+		return -1;
+	}
+
+	printf("Memory card saved: %s\n", output);
 	return 0;
 }
 
@@ -336,6 +363,9 @@ int main(int argc, char **argv)
 			cmd = CMD_MCX_IMG;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--mc-create") || !strcmp(argv[2], "-new")) {
+			cmd = CMD_MCCREATE;
+		}
 		else if (!strcmp(argv[2], "--mc-format")) {
 			cmd = CMD_MCFORMAT;
 		}
@@ -400,6 +430,10 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
+
+	/* Creating a card is the one command with no card to open. */
+	if (cmd == CMD_MCCREATE)
+		return cmd_mccreate(argv[1]) < 0 ? 1 : 0;
 
 	r = openMemoryCard(argv[1], 0);
 

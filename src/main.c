@@ -30,6 +30,8 @@
 #include "util.h"
 #include "ps2icon.h"
 #include "psv_resign.h"
+#include "ps2save.h"
+#include "ps2blank.h"
 #include "svpng.h"
 
 #define PROGRAM_NAME    "PS2VMC-TOOL"
@@ -46,16 +48,19 @@ enum ps2vmc_cmd {
 	CMD_LIST,
 	CMD_PSU_EXPORT,
 	CMD_PSV_EXPORT,
+	CMD_XPS_EXPORT,
+	CMD_CBS_EXPORT,
+	CMD_MAX_EXPORT,
 	CMD_ICONS_PNG,
 	CMD_EXTRACT,
 	CMD_MCFORMAT,
+	CMD_MCCREATE,
 	CMD_INJECT,
 	CMD_MKDIR,
 	CMD_RMDIR,
 	CMD_REMOVE,
 	CMD_CROSSLINK,
-	CMD_PSU_IMPORT,
-	CMD_PSV_IMPORT,
+	CMD_SAVE_IMPORT,
 };
 
 
@@ -73,6 +78,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --mc-image, -img <output filepath>\n");
 	printf("\t --ecc-image, -ecc <output filepath>\n");
 	printf("\t --mc-format\n");
+	printf("\t --mc-create, -new  (write a new empty card to <VMC filepath>)\n");
 	printf("\t --list, -ls <mc path>\n");
 	printf("\t --icons-png <mc path>\n");
 	printf("\t --extract-file, -x <mc filepath> <output filepath>\n");
@@ -81,10 +87,12 @@ static void print_usage(int argc, char **argv)
 	printf("\t --remove-directory, -rmdir <mc path>\n");
 	printf("\t --remove, -rm <mc filepath>\n");
 	printf("\t --file-crosslink, -cl <real mc filepath> <dummy mc filepath>\n");
-	printf("\t --psv-import, -pi <PSV filepath>\n");
-	printf("\t --psu-import, -pu <PSU filepath>\n");
-	printf("\t --psu-export, -px <mc path> <output filepath>\n");
-	printf("\t --psv-export, -pv <mc path> <output filepath>\n");
+	printf("\t --import, -imp <save filepath>  (PSU, PSV, CBS, MAX or XPS)\n");
+	printf("\t --psu-export, -psu <mc path> <output filepath>\n");
+	printf("\t --psv-export, -psv <mc path> <output filepath>\n");
+	printf("\t --xps-export, -xps <mc path> <output filepath>\n");
+	printf("\t --cbs-export, -cbs <mc path> <output filepath>\n");
+	printf("\t --max-export, -max <mc path> <output filepath>\n");
 	printf("\n");
 }
 
@@ -796,6 +804,124 @@ static int cmd_import(const char *input)
 	return fd;
 }
 
+/*
+ * Import a save file (PSU/PSV/CBS/MAX/XPS). The format is detected from the file
+ * contents, so --import and the legacy --psu-import/--psv-import flags all land
+ * in the same code path.
+ */
+/*
+ * Export a save as one of the third-party containers. The two differ only in
+ * the builder they call, so they share everything around it.
+ */
+static int cmd_save_export(const char *path, const char *output, const char *fmt,
+			   int (*build)(const ps2save_t *, uint8_t **, size_t *))
+{
+	ps2save_t save;
+	uint8_t *buf;
+	size_t len;
+	int r;
+
+	r = ps2save_read_card(path, &save);
+	if (r < 0) {
+		fprintf(stderr, "Error: can't read '%s' from the card (%d)\n", path, r);
+		return r;
+	}
+
+	printf("Exporting '%s' to %s...\n", path, output);
+
+	for (int i = 0; i < save.file_count; i++)
+		printf("Adding %s/%-40s | %8u bytes\n", save.dirname,
+			save.files[i].name, save.files[i].size);
+
+	r = build(&save, &buf, &len);
+	ps2save_free(&save);
+
+	if (r < 0) {
+		fprintf(stderr, "Error: can't build %s from '%s' (%d)\n", fmt, path, r);
+		return r;
+	}
+
+	if (write_buffer(output, buf, len) < 0) {
+		fprintf(stderr, "Error: can't write '%s'\n", output);
+		free(buf);
+		return -1000;
+	}
+
+	free(buf);
+	printf("Save successfully exported to %s.\n", output);
+	return 0;
+}
+
+static int cmd_psu_import(const char *input);
+
+/*
+ * Import a save of any supported format. The container is identified from its
+ * contents, never from the file name, by the same ps2save_detect() the web
+ * build uses - so there is nothing for the caller to get wrong.
+ */
+static int cmd_save_import(const char *input)
+{
+	ps2save_t save;
+	uint8_t *buf;
+	size_t len;
+	int r, fmt;
+
+	if (read_buffer(input, &buf, &len) < 0) {
+		fprintf(stderr, "Error: can't open file '%s'\n", input);
+		return -1000;
+	}
+
+	fmt = ps2save_detect(buf, len);
+	free(buf);
+
+	/* PSU and PSV have their own readers already; hand them straight over. */
+	if (fmt == PS2SAVE_PSU)
+		return cmd_psu_import(input);
+
+	if (fmt == PS2SAVE_PSV)
+		return cmd_import(input);
+
+	if (fmt != PS2SAVE_CBS && fmt != PS2SAVE_MAX && fmt != PS2SAVE_XPS) {
+		fprintf(stderr, "Error: '%s' is not a PS2 save "
+			"(expected PSU, PSV, CBS, MAX or XPS)\n", input);
+		return PS2SAVE_ERR_FORMAT;
+	}
+
+	if (read_buffer(input, &buf, &len) < 0) {
+		fprintf(stderr, "Error: can't open file '%s'\n", input);
+		return -1000;
+	}
+
+	printf("Reading file: '%s'...\n", input);
+
+	r = ps2save_parse(buf, len, &save);
+	free(buf);
+
+	if (r < 0) {
+		fprintf(stderr, "Error: can't read '%s' as a PS2 save container: %s (%d)\n",
+			input, ps2save_error_name(r), r);
+		return r;
+	}
+
+	if (mcio_mcStat(save.dirname, &(struct io_dirent){0}) == sceMcResSucceed) {
+		fprintf(stderr, "Error: the card already has a save named '%s'; "
+			"remove it first with --remove-directory\n", save.dirname);
+		ps2save_free(&save);
+		return PS2SAVE_ERR_EXISTS;
+	}
+
+	printf("Writing %s data to: '/%s'...\n", ps2save_format_name(fmt), save.dirname);
+
+	for (int i = 0; i < save.file_count; i++)
+		printf("Adding %s/%-40s | %8u bytes\n", save.dirname,
+			save.files[i].name, save.files[i].size);
+
+	r = ps2save_write(&save);
+	ps2save_free(&save);
+
+	return r;
+}
+
 static int cmd_psu_import(const char *input)
 {
 	int fd, r;
@@ -945,6 +1071,9 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[2], "--mc-format")) {
 			cmd = CMD_MCFORMAT;
 		}
+		else if (!strcmp(argv[2], "--mc-create") || !strcmp(argv[2], "-new")) {
+			cmd = CMD_MCCREATE;
+		}
 		else if (!strcmp(argv[2], "--list") || !strcmp(argv[2], "-ls")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
@@ -1009,23 +1138,24 @@ int main(int argc, char **argv)
 			cmd = CMD_CROSSLINK;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--psu-import") || !strcmp(argv[2], "-pu")) {
+		/* One import for every format: the file says what it is, so the
+		 * older spellings all land here too. --psu-import/-pu and
+		 * --psv-import/-pi are kept because they shipped; they are no longer
+		 * advertised. */
+		else if (!strcmp(argv[2], "--import") || !strcmp(argv[2], "-imp") ||
+			 !strcmp(argv[2], "--psu-import") || !strcmp(argv[2], "-pu") ||
+			 !strcmp(argv[2], "--psv-import") || !strcmp(argv[2], "-pi")) {
 			if (argc < 3) {
 				print_usage(argc, argv);
 				return 1;
 			}
-			cmd = CMD_PSU_IMPORT;
+			cmd = CMD_SAVE_IMPORT;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--psv-import") || !strcmp(argv[2], "-pi")) {
-			if (argc < 3) {
-				print_usage(argc, argv);
-				return 1;
-			}
-			cmd = CMD_PSV_IMPORT;
-			cmd_args = &argv[3];
-		}
-		else if (!strcmp(argv[2], "--psu-export") || !strcmp(argv[2], "-px")) {
+		/* -px and -pv shipped, so they still work; they are not advertised.
+		 * The short options now name the format, matching --import's family. */
+		else if (!strcmp(argv[2], "--psu-export") || !strcmp(argv[2], "-psu") ||
+			 !strcmp(argv[2], "-px")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
 				return 1;
@@ -1033,7 +1163,32 @@ int main(int argc, char **argv)
 			cmd = CMD_PSU_EXPORT;
 			cmd_args = &argv[3];
 		}
-		else if (!strcmp(argv[2], "--psv-export") || !strcmp(argv[2], "-pv")) {
+		else if (!strcmp(argv[2], "--xps-export") || !strcmp(argv[2], "-xps")) {
+			if (argc < 4) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_XPS_EXPORT;
+			cmd_args = &argv[3];
+		}
+		else if (!strcmp(argv[2], "--cbs-export") || !strcmp(argv[2], "-cbs")) {
+			if (argc < 4) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_CBS_EXPORT;
+			cmd_args = &argv[3];
+		}
+		else if (!strcmp(argv[2], "--max-export") || !strcmp(argv[2], "-max")) {
+			if (argc < 4) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_MAX_EXPORT;
+			cmd_args = &argv[3];
+		}
+		else if (!strcmp(argv[2], "--psv-export") || !strcmp(argv[2], "-psv") ||
+			 !strcmp(argv[2], "-pv")) {
 			if (argc < 4) {
 				print_usage(argc, argv);
 				return 1;
@@ -1045,6 +1200,31 @@ int main(int argc, char **argv)
 			print_usage(argc, argv);
 			return 1;
 		}
+	}
+
+	/* Creating a card is the one command with no card to open: argv[1] is the
+	 * file about to be written, and it is not expected to exist. */
+	if (cmd == CMD_MCCREATE) {
+		uint8_t *blank;
+		size_t blank_len;
+
+		if (ps2blank_create(&blank, &blank_len) < 0) {
+			fprintf(stderr, "Error: can't build a new memory card\n");
+			return 1;
+		}
+
+		printf("Creating a new %d MB memory card...\n",
+			(int)(blank_len / 1024 / 1024));
+
+		if (write_buffer(argv[1], blank, blank_len) < 0) {
+			fprintf(stderr, "Error: can't write '%s'\n", argv[1]);
+			free(blank);
+			return 1;
+		}
+
+		free(blank);
+		printf("VMC file saved: %s\n", argv[1]);
+		return 0;
 	}
 
 	if (read_buffer(argv[1], &data, &dsize) < 0) {
@@ -1095,6 +1275,24 @@ int main(int argc, char **argv)
 			r = cmd_psv_export(cmd_args[0], cmd_args[1]);
 			if (r < 0)
 				fprintf(stderr, "Error: can't export save to PSV... (%d)\n", r);
+		}
+		else if (cmd == CMD_XPS_EXPORT) {
+			r = cmd_save_export(cmd_args[0], cmd_args[1], "an XPS",
+					    ps2save_build_xps);
+			if (r < 0)
+				fprintf(stderr, "Error: can't export save to XPS... (%d)\n", r);
+		}
+		else if (cmd == CMD_CBS_EXPORT) {
+			r = cmd_save_export(cmd_args[0], cmd_args[1], "a CBS",
+					    ps2save_build_cbs);
+			if (r < 0)
+				fprintf(stderr, "Error: can't export save to CBS... (%d)\n", r);
+		}
+		else if (cmd == CMD_MAX_EXPORT) {
+			r = cmd_save_export(cmd_args[0], cmd_args[1], "a MAX",
+					    ps2save_build_max);
+			if (r < 0)
+				fprintf(stderr, "Error: can't export save to MAX... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();
@@ -1154,15 +1352,8 @@ int main(int argc, char **argv)
 			if (r < 0)
 				fprintf(stderr, "Error: can't crosslink file '%s'... (%d)\n", cmd_args[0], r);
 		}
-		else if (cmd == CMD_PSU_IMPORT) {
-			r = cmd_psu_import(cmd_args[0]);
-			if (r == sceMcResNoFormat)
-				fprintf(stderr, "Error: memory card is not formatted!\n");
-			else if (r < 0)
-				fprintf(stderr, "Error: can't import file '%s'... (%d)\n", cmd_args[0], r);
-		}
-		else if (cmd == CMD_PSV_IMPORT) {
-			r = cmd_import(cmd_args[0]);
+		else if (cmd == CMD_SAVE_IMPORT) {
+			r = cmd_save_import(cmd_args[0]);
 			if (r == sceMcResNoFormat)
 				fprintf(stderr, "Error: memory card is not formatted!\n");
 			else if (r < 0)

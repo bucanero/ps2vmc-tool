@@ -11,7 +11,7 @@ PS2VMC Tool is a command-line application for managing PS2 virtual memory cards 
 ## Usage
 
 ```
-PS2VMC-TOOL v1.1.2
+PS2VMC-TOOL v1.3.0
 Copyright (C) 2023 - by Bucanero
 based on ps3mca-tool by jimmikaelkael et al.
 
@@ -24,17 +24,21 @@ Available commands:
 	 --mc-image, -img <output filepath>
 	 --ecc-image, -ecc <output filepath>
 	 --mc-format
+	 --mc-create, -new  (write a new empty card to <VMC filepath>)
 	 --list, -ls <mc path>
+	 --icons-png <mc path>
 	 --extract-file, -x <mc filepath> <output filepath>
 	 --inject-file, -in <input filepath> <mc filepath>
 	 --make-directory, -mkdir <mc path>
 	 --remove-directory, -rmdir <mc path>
 	 --remove, -rm <mc filepath>
 	 --file-crosslink, -cl <real mc filepath> <dummy mc filepath>
-	 --psv-import, -pi <PSV filepath>
-	 --psu-import, -pu <PSU filepath>
-	 --psu-export, -px <mc path> <output filepath>
-	 --psv-export, -pv <mc path> <output filepath>
+	 --import, -imp <save filepath>  (PSU, PSV, CBS, MAX or XPS)
+	 --psu-export, -psu <mc path> <output filepath>
+	 --psv-export, -psv <mc path> <output filepath>
+	 --xps-export, -xps <mc path> <output filepath>
+	 --cbs-export, -cbs <mc path> <output filepath>
+	 --max-export, -max <mc path> <output filepath>
 ```
 
 ---
@@ -46,7 +50,7 @@ PS1VMC Tool is a command-line application for managing PS1 virtual memory cards 
 ## Usage
 
 ```
-PS1VMC-TOOL v1.0.0
+PS1VMC-TOOL v1.1.0
 Copyright (C) 2024 - by Bucanero
 based on MemcardRex by ShendoXT
 
@@ -57,6 +61,7 @@ Available commands:
 	 --mc-info, -i
 	 --mc-free, -f
 	 --mc-format
+	 --mc-create, -new  (write a new empty card to <MC filepath>)
 	 --list, -ls
 	 --remove, -rm <slot #>
 	 --icons <slot #>
@@ -82,6 +87,18 @@ This builds both tools. `make ps1` and `make ps2` build just one. The two
 programs are independent and link only what they use — the PS1 tool contains
 no PS2 filesystem code, and the PS2 tool contains no PS1 card code — sharing
 only `util.c`, `aes.c` and the signing files.
+
+The one external dependency is **zlib**, and only the PS2 tool needs it: a
+CodeBreaker `.cbs` body is a deflate stream, read on import and written on
+export. It comes with the SDK on macOS, with `zlib1g-dev` on Debian and Ubuntu,
+and as `mingw-w64-<arch>-zlib` under MSYS2. The Windows binaries are not built
+under MSYS2 though: both are cross-compiled on Linux with mingw-w64, where
+`libz-mingw-w64-dev` covers the 32- and 64-bit targets alike. To force the
+static archive, as those builds do so the released `.exe` needs no `zlib1.dll`:
+
+```
+make PS2_LIBS=-l:libz.a
+```
 
 ### Save signing
 

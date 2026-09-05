@@ -34,6 +34,7 @@ an S3 bucket) — there is no backend to deploy.
 | `--extract-save`, `--mcs-export`, `--arx-export`, `--psv-export` | *Export ▾* on any save |
 | *(improves on the CLI)* | `.psv` exports are signed, and carry a correct `dataSize` |
 | `--inject-save` | *Import save…*, or drop a save file onto an open card |
+| `--mc-create` | *New blank card* — a formatted 128 KB card |
 | `--remove` | *Remove* on a save |
 | `--mc-format` | *Format card* |
 | `--raw-image`, `--gme-image`, `--vgs-image`, `--vmp-image` | *Download card ▾* |

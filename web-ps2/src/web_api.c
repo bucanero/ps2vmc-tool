@@ -21,6 +21,8 @@
 
 #include "mcio.h"
 #include "util.h"
+#include "ps2save.h"
+#include "ps2blank.h"
 
 #define PSV_MAGIC       0x50535600
 #define KEEP            EMSCRIPTEN_KEEPALIVE
@@ -68,6 +70,25 @@ static int buf_fill(buf_t *b, uint8_t v, size_t n)
 	memset(b->p + b->len, v, n);
 	b->len += n;
 	return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* a new card                                                         */
+/* ------------------------------------------------------------------ */
+
+/* Build an empty card; caller frees. Raw, without ECC spare bytes. */
+KEEP uint8_t *vmc_blank_card(int *out_len)
+{
+	uint8_t *card;
+	size_t len;
+
+	if (ps2blank_create(&card, &len) < 0) {
+		*out_len = -1000;
+		return NULL;
+	}
+
+	*out_len = (int)len;
+	return card;
 }
 
 /* ------------------------------------------------------------------ */
@@ -470,6 +491,103 @@ KEEP int vmc_psu_import(uint8_t *data, int size)
 	mcio_mcSetStat(psu_entry.name, &entry);
 
 	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* XPS, CBS and MAX export                                            */
+/* ------------------------------------------------------------------ */
+
+/* Read a save off the card and hand it to one of the container builders. */
+static uint8_t *save_export(const char *path, int *out_len,
+			    int (*build)(const ps2save_t *, uint8_t **, size_t *))
+{
+	ps2save_t save;
+	uint8_t *buf;
+	size_t len;
+	int r;
+
+	r = ps2save_read_card(path, &save);
+	if (r < 0) {
+		*out_len = r;
+		return NULL;
+	}
+
+	r = build(&save, &buf, &len);
+	ps2save_free(&save);
+
+	if (r < 0) {
+		*out_len = r;
+		return NULL;
+	}
+
+	*out_len = (int)len;
+	return buf;
+}
+
+/* Serialise a save as an Xploder/SharkPort .xps; caller frees the buffer. */
+KEEP uint8_t *vmc_xps_export(const char *path, int *out_len)
+{
+	return save_export(path, out_len, ps2save_build_xps);
+}
+
+/* Serialise a save as a CodeBreaker .cbs; caller frees the buffer. */
+KEEP uint8_t *vmc_cbs_export(const char *path, int *out_len)
+{
+	return save_export(path, out_len, ps2save_build_cbs);
+}
+
+/* Serialise a save as an Action Replay MAX .max; caller frees the buffer. */
+KEEP uint8_t *vmc_max_export(const char *path, int *out_len)
+{
+	return save_export(path, out_len, ps2save_build_max);
+}
+
+/* ------------------------------------------------------------------ */
+/* Third-party containers: .cbs / .max / .xps                         */
+/* ------------------------------------------------------------------ */
+
+/* What container is this? One of the ps2save_format values. */
+KEEP int vmc_save_detect(uint8_t *p, int size)
+{
+	if (size < 0)
+		return PS2SAVE_UNKNOWN;
+
+	return ps2save_detect(p, (size_t)size);
+}
+
+/* The directory a container would create, or "" if it cannot be read. */
+KEEP const char *vmc_save_dirname(uint8_t *p, int size)
+{
+	static char name[33];
+	ps2save_t save;
+
+	name[0] = '\0';
+
+	if (size > 0 && ps2save_parse(p, (size_t)size, &save) == 0) {
+		snprintf(name, sizeof(name), "%s", save.dirname);
+		ps2save_free(&save);
+	}
+
+	return name;
+}
+
+/* Import a .cbs/.max/.xps save. The format is detected from the data. */
+KEEP int vmc_save_import(uint8_t *p, int size)
+{
+	ps2save_t save;
+	int r;
+
+	if (size <= 0)
+		return PS2SAVE_ERR_TRUNCATED;
+
+	r = ps2save_parse(p, (size_t)size, &save);
+	if (r < 0)
+		return r;
+
+	r = ps2save_write(&save);
+	ps2save_free(&save);
+
+	return r;
 }
 
 /* ------------------------------------------------------------------ */

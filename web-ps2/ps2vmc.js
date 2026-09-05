@@ -37,6 +37,11 @@
     "-100": "not a directory",
     "-101": "not a file",
     "-1000": "out of memory",
+    "-1010": "not a PS2 save container",
+    "-1011": "file is truncated",
+    "-1012": "could not decompress the save",
+    "-1013": "the card already has a save with that name",
+    "-1014": "the save file is damaged (its checksum does not match)",
     "-1001": "short read",
     "-1002": "allocation failed",
     "-1003": "truncated or malformed container",
@@ -53,6 +58,16 @@
     DUPPROHIBIT: 0x0008, FILE: 0x0010, SUBDIR: 0x0020,
     CLOSED: 0x0080, PDAEXEC: 0x0800, PS1: 0x1000,
     HIDDEN: 0x2000, EXISTS: 0x8000
+  };
+
+  /* Save containers the wasm can identify; mirrors enum ps2save_format. */
+  const FORMAT = {
+    UNKNOWN: 0, PSU: 1, PSV: 2, CBS: 3, MAX: 4, XPS: 5
+  };
+
+  const FORMAT_NAME = {
+    0: "unknown", 1: "PSU", 2: "PSV",
+    3: "CodeBreaker", 4: "Action Replay MAX", 5: "Xploder/SharkPort"
   };
 
   class VmcError extends Error {
@@ -88,6 +103,13 @@
       psuExport:  Module.cwrap("vmc_psu_export", "number", ["string", "number"]),
       psuImport:  Module.cwrap("vmc_psu_import", "number", ["number", "number"]),
       psvImport:  Module.cwrap("vmc_psv_import", "number", ["number", "number"]),
+      saveImport: Module.cwrap("vmc_save_import", "number", ["number", "number"]),
+      xpsExport:  Module.cwrap("vmc_xps_export", "number", ["string", "number"]),
+      cbsExport:  Module.cwrap("vmc_cbs_export", "number", ["string", "number"]),
+      maxExport:  Module.cwrap("vmc_max_export", "number", ["string", "number"]),
+      saveDetect: Module.cwrap("vmc_save_detect", "number", ["number", "number"]),
+      saveDirName: Module.cwrap("vmc_save_dirname", "string", ["number", "number"]),
+      blankCard:  Module.cwrap("vmc_blank_card", "number", ["number"]),
       sizeofDirent: Module.cwrap("vmc_sizeof_dirent", "number", []),
       offsetofName: Module.cwrap("vmc_offsetof_name", "number", [])
     };
@@ -167,6 +189,20 @@
       errText,
 
       /* ---- card ---- */
+
+      /**
+       * Build an empty 8 MB card image, raw and without ECC spare bytes.
+       * Written by src/ps2blank.c, the same code behind the CLI's
+       * --mc-create, because mcio cannot format an image that is not
+       * already a card.
+       */
+      blankCard() {
+        const lp = scratchPtr(4);
+        const ptr = c.blankCard(lp);
+        const len = view().getInt32(lp, true);
+        if (!ptr) throw new VmcError(len, "building a blank card");
+        return takeBuffer(ptr, len);
+      },
 
       /** Load a .vmc/.ps2/.mcd image. Returns card info; throws VmcError. */
       openCard(bytes) {
@@ -299,6 +335,33 @@
         return takeBuffer(ptr, len);
       },
 
+      /** Export a save as an Xploder/SharkPort .xps. */
+      xpsExport(path) {
+        const lp = scratchPtr(4);
+        const ptr = c.xpsExport(path, lp);
+        const len = view().getInt32(lp, true);
+        if (!ptr) throw new VmcError(len, "exporting " + path);
+        return takeBuffer(ptr, len);
+      },
+
+      /** Export a save as a CodeBreaker .cbs. */
+      cbsExport(path) {
+        const lp = scratchPtr(4);
+        const ptr = c.cbsExport(path, lp);
+        const len = view().getInt32(lp, true);
+        if (!ptr) throw new VmcError(len, "exporting " + path);
+        return takeBuffer(ptr, len);
+      },
+
+      /** Export a save as an Action Replay MAX .max. */
+      maxExport(path) {
+        const lp = scratchPtr(4);
+        const ptr = c.maxExport(path, lp);
+        const len = view().getInt32(lp, true);
+        if (!ptr) throw new VmcError(len, "exporting " + path);
+        return takeBuffer(ptr, len);
+      },
+
       psuImport(bytes) {
         const ptr = Module._malloc(bytes.length);
         try {
@@ -316,6 +379,40 @@
           heap().set(bytes, ptr);
           const r = c.psvImport(ptr, bytes.length);
           if (r < 0) throw new VmcError(r, "importing PSV");
+        } finally {
+          Module._free(ptr);
+        }
+      },
+
+      /** Which container is this? One of PS2VMC.FORMAT. */
+      detect(bytes) {
+        const ptr = Module._malloc(bytes.length || 1);
+        try {
+          heap().set(bytes, ptr);
+          return c.saveDetect(ptr, bytes.length);
+        } finally {
+          Module._free(ptr);
+        }
+      },
+
+      /** The directory a .cbs/.max/.xps would create, or "" if unreadable. */
+      saveDirName(bytes) {
+        const ptr = Module._malloc(bytes.length || 1);
+        try {
+          heap().set(bytes, ptr);
+          return c.saveDirName(ptr, bytes.length);
+        } finally {
+          Module._free(ptr);
+        }
+      },
+
+      /** Import a .cbs/.max/.xps save; the format is detected from the data. */
+      saveImport(bytes) {
+        const ptr = Module._malloc(bytes.length);
+        try {
+          heap().set(bytes, ptr);
+          const r = c.saveImport(ptr, bytes.length);
+          if (r < 0) throw new VmcError(r, "importing save");
         } finally {
           Module._free(ptr);
         }
@@ -392,5 +489,6 @@
     return create(Module);
   }
 
-  return { load, ATTR, errText, VmcError };
+
+  return { load, ATTR, FORMAT, FORMAT_NAME, errText, VmcError };
 });
