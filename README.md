@@ -90,8 +90,10 @@ only `util.c`, `aes.c` and the signing files.
 The one external dependency is **zlib**, and only the PS2 tool needs it: a
 CodeBreaker `.cbs` body is a deflate stream, read on import and written on
 export. It comes with the SDK on macOS, with `zlib1g-dev` on Debian and Ubuntu,
-and as `mingw-w64-<arch>-zlib` under MSYS2. To force the static archive, as the
-Windows builds do so the released `.exe` needs no `zlib1.dll`:
+and as `mingw-w64-<arch>-zlib` under MSYS2. The Windows binaries are not built
+under MSYS2 though: both are cross-compiled on Linux with mingw-w64, where
+`libz-mingw-w64-dev` covers the 32- and 64-bit targets alike. To force the
+static archive, as those builds do so the released `.exe` needs no `zlib1.dll`:
 
 ```
 make PS2_LIBS=-l:libz.a

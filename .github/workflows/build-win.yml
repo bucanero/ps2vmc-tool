@@ -7,53 +7,59 @@ on:
     types: [run_build]
 
 jobs:
-  # x64 Windows build via MSYS2. 32-bit is handled by the win32-cross job below,
-  # because MSYS2 no longer ships a working 32-bit toolchain — its MINGW32 target
-  # silently produced x86-64 binaries.
+  # Both Windows binaries are cross-compiled on Linux with mingw-w64.
   #
-  # Both jobs here only check that the binaries built and are the right
-  # architecture. The functional smoke test lives in build.yml, which produces
-  # native binaries the runner can actually execute.
-  msys:
-    runs-on: windows-2022
+  # MSYS2 is deliberately not used. Its MINGW32 target silently produced
+  # x86-64 binaries under a 32-bit name, which is what started this, and the
+  # package database on the runner image is not a dependable place to get zlib
+  # from. apt is: libz-mingw-w64-dev carries zlib for both mingw targets, so
+  # one mechanism now covers both architectures.
+  #
+  # These jobs only check that the binaries built and are the right shape. The
+  # functional smoke test lives in build.yml, which produces native binaries
+  # the runner can actually execute.
+  cross:
+    runs-on: ubuntu-latest
+    name: Windows ${{ matrix.arch }} (Linux cross)
     strategy:
+      fail-fast: false
       matrix:
-        mingw: ["MINGW64"]
         include:
-          - mingw: "MINGW64"
-            package: "mingw-w64-x86_64"
-    defaults:
-      run:
-        shell: bash.exe --login -eo pipefail "{0}"
-    env:
-      MSYSTEM: ${{ matrix.mingw }}
-      CHERE_INVOKING: 1
-    name: MSYS2 ${{ matrix.mingw }}
+          - arch: x64
+            tc: x86_64-w64-mingw32
+            gcc: gcc-mingw-w64-x86-64
+            pe: "PE32+ executable"
+            machine: x86-64
+          - arch: x86
+            tc: i686-w64-mingw32
+            gcc: gcc-mingw-w64-i686
+            pe: "PE32 executable"
+            machine: "80386"
     steps:
       - uses: actions/checkout@v4
-      - name: Set up shell
-        run: echo "C:\msys64\usr\bin\" >> $GITHUB_PATH
-        shell: pwsh
 
-      # zlib is a real dependency now: .cbs bodies are deflate-compressed.
-      - name: Install MinGW requirements
+      - name: Install the mingw cross toolchain
         run: |
-          pacman -S --noconfirm --needed ${{ matrix.package }}-zlib
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.gcc }} libz-mingw-w64-dev
 
-      # -l:libz.a picks the static archive over the import library, so the
-      # released .exe does not need zlib1.dll beside it.
+      # EXE is set explicitly: the Makefile only appends .exe when $(OS) says
+      # Windows_NT, which it does not on the Linux runner. -l:libz.a picks the
+      # static archive over the import library, so the .exe needs no zlib1.dll.
       - name: Build binaries
         run: |
-          make PS2_LIBS=-l:libz.a
+          make CC=${{ matrix.tc }}-gcc EXE=.exe PS2_LIBS=-l:libz.a
 
-      # The architecture is asserted, not just printed: the MINGW32 leg used to
+      # The architecture is asserted, not just printed: the MSYS2 leg used to
       # produce x86-64 binaries under a 32-bit name and nothing noticed.
-      - name: Check the binaries are 64-bit
+      # "PE32 executable" matches only 32-bit; a 64-bit one reads "PE32+".
+      - name: Check the binaries are ${{ matrix.arch }}
         run: |
           file ps2vmc-tool.exe ps1vmc-tool.exe
           for f in ps2vmc-tool.exe ps1vmc-tool.exe; do
-            file "$f" | grep -q "PE32+ executable" && file "$f" | grep -q "x86-64" || {
-              echo "::error::$f is not a 64-bit PE: $(file -b "$f")"; exit 1; }
+            file "$f" | grep -q "${{ matrix.pe }}" &&
+            file "$f" | grep -q "${{ matrix.machine }}" || {
+              echo "::error::$f is not ${{ matrix.arch }}: $(file -b "$f")"; exit 1; }
           done
 
       # An artifact that needs a DLL we do not ship is broken for whoever
@@ -61,59 +67,7 @@ jobs:
       - name: Check zlib is linked statically
         run: |
           for f in ps2vmc-tool.exe ps1vmc-tool.exe; do
-            if objdump -p "$f" | grep -i "DLL Name" | grep -qi "zlib"; then
-              echo "::error::$f depends on a zlib DLL"; exit 1
-            fi
-          done
-          echo "no zlib DLL dependency"
-
-      - name: Get short SHA
-        run: echo "sha_name=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
-
-      - name: Compress output
-        run: |
-          tar -zcvf build.tar.gz ps2vmc-tool.exe ps1vmc-tool.exe
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ env.sha_name }}-${{matrix.mingw}}
-          path: build.tar.gz
-
-  # Genuine 32-bit (x86) Windows build, cross-compiled on Linux with mingw-w64,
-  # since MSYS2 no longer provides a working 32-bit toolchain.
-  win32-cross:
-    runs-on: ubuntu-latest
-    name: Windows x86 (Linux cross)
-    env:
-      TC: i686-w64-mingw32
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install i686 mingw cross toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-i686 libz-mingw-w64-dev
-
-      # EXE is set explicitly: the Makefile only appends .exe when $(OS) says
-      # Windows_NT, which it does not on the Linux runner. -l:libz.a picks the
-      # static archive over the import library, so no zlib1.dll is needed.
-      - name: Build binaries
-        run: |
-          make CC=${TC}-gcc EXE=.exe PS2_LIBS=-l:libz.a
-
-      # "PE32 executable" matches only 32-bit: a 64-bit one reads "PE32+".
-      - name: Check the binaries are 32-bit x86
-        run: |
-          file ps2vmc-tool.exe ps1vmc-tool.exe
-          for f in ps2vmc-tool.exe ps1vmc-tool.exe; do
-            file "$f" | grep -q "PE32 executable" && file "$f" | grep -q "80386" || {
-              echo "::error::$f is not a 32-bit x86 PE: $(file -b "$f")"; exit 1; }
-          done
-
-      - name: Check zlib is linked statically
-        run: |
-          for f in ps2vmc-tool.exe ps1vmc-tool.exe; do
-            if ${TC}-objdump -p "$f" | grep -i "DLL Name" | grep -qi "zlib"; then
+            if ${{ matrix.tc }}-objdump -p "$f" | grep -i "DLL Name" | grep -qi "zlib"; then
               echo "::error::$f depends on a zlib DLL"; exit 1
             fi
           done
@@ -124,7 +78,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: build-${{ env.sha_name }}-win32
+          name: build-${{ env.sha_name }}-win-${{ matrix.arch }}
           path: |
             ps1vmc-tool.exe
             ps2vmc-tool.exe

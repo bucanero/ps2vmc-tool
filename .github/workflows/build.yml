@@ -36,7 +36,7 @@ jobs:
         make
 
     # These binaries are native, so the runner can actually execute them: the
-    # Windows jobs only cross-build or run under MSYS, where this never ran.
+    # Windows jobs cross-compile, so they can only inspect what they produce.
     # Every check below reads real output, so a command that fails, or that
     # succeeds while printing the wrong thing, fails the build.
     - name: Smoke test the binaries
