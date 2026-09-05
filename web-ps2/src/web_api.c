@@ -494,7 +494,7 @@ KEEP int vmc_psu_import(uint8_t *data, int size)
 }
 
 /* ------------------------------------------------------------------ */
-/* XPS and CBS export                                                 */
+/* XPS, CBS and MAX export                                            */
 /* ------------------------------------------------------------------ */
 
 /* Read a save off the card and hand it to one of the container builders. */
@@ -534,6 +534,12 @@ KEEP uint8_t *vmc_xps_export(const char *path, int *out_len)
 KEEP uint8_t *vmc_cbs_export(const char *path, int *out_len)
 {
 	return save_export(path, out_len, ps2save_build_cbs);
+}
+
+/* Serialise a save as an Action Replay MAX .max; caller frees the buffer. */
+KEEP uint8_t *vmc_max_export(const char *path, int *out_len)
+{
+	return save_export(path, out_len, ps2save_build_max);
 }
 
 /* ------------------------------------------------------------------ */

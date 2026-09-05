@@ -45,6 +45,7 @@ enum ps2save_format {
 #define PS2SAVE_ERR_TRUNCATED   -1011
 #define PS2SAVE_ERR_DECOMPRESS  -1012
 #define PS2SAVE_ERR_EXISTS      -1013
+#define PS2SAVE_ERR_CHECKSUM    -1014
 
 /* A save is at most a directory of files; no container nests deeper. */
 #define PS2SAVE_MAX_FILES       512
@@ -73,6 +74,9 @@ int ps2save_detect(const uint8_t *buf, size_t len);
 /* Human-readable name for a ps2save_format, for messages. */
 const char *ps2save_format_name(int fmt);
 
+/* Human-readable reason for a PS2SAVE_ERR_*, for messages. */
+const char *ps2save_error_name(int err);
+
 /*
  * Read a .cbs/.max/.xps container into `out`. Returns 0, or a negative
  * PS2SAVE_ERR_*. On failure `out` is left zeroed and owns nothing. On success
@@ -90,14 +94,13 @@ int ps2save_write(const ps2save_t *save);
 int ps2save_read_card(const char *path, ps2save_t *out);
 
 /*
- * Serialise a save as an Xploder/SharkPort .xps or a CodeBreaker .cbs. `*out`
- * is malloc'd and owned by the caller. Returns 0 or a negative PS2SAVE_ERR_*.
- *
- * There is no .max writer: its header under-reports both its sizes, so a file
- * we produced would be as awkward to read back as the ones in the wild.
+ * Serialise a save as an Xploder/SharkPort .xps, a CodeBreaker .cbs or an
+ * Action Replay MAX .max. `*out` is malloc'd and owned by the caller.
+ * Returns 0 or a negative PS2SAVE_ERR_*.
  */
 int ps2save_build_xps(const ps2save_t *save, uint8_t **out, size_t *out_len);
 int ps2save_build_cbs(const ps2save_t *save, uint8_t **out, size_t *out_len);
+int ps2save_build_max(const ps2save_t *save, uint8_t **out, size_t *out_len);
 
 void ps2save_free(ps2save_t *save);
 

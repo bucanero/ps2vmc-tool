@@ -17,6 +17,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const { crc32 } = require("zlib");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const CLI = path.join(ROOT, "ps2vmc-tool");
@@ -54,6 +55,21 @@ function cmpBytes(a, b) {
 const isDot = n => n === "." || n === "..";
 
 const XPS_ENTRY = 250;
+
+/* Offset of the crc field in a .max header, right after the 12-byte magic. */
+const MAX_CRC_AT = 12;
+
+/* Zeros the crc field, which is how the stored value is computed. */
+const zeroCrc = (b) => { const z = Buffer.from(b); z.writeUInt32LE(0, MAX_CRC_AT); return z; };
+
+/* Drop every trailing zero byte: that removes the padding a .max writer
+ * appends, and any zeros the LZARI stream itself happens to end on - which is
+ * the same thing as far as a decoder reading past the end is concerned. */
+function stripTrailingZeros(b) {
+  let end = b.length;
+  while (end > 0 && b[end - 1] === 0) end--;
+  return Buffer.from(b.subarray(0, end));
+}
 
 /*
  * The closing word of an .xps, over the directory entry through the last byte
@@ -435,6 +451,214 @@ async function main() {
       ok(label + " header (dataOffset " + bytes.readUInt32LE(8) +
          ") reads the same files", same && !err, err || "file lists differ");
     }
+  }
+
+  /* ---------- 3d2. the .xps trailing checksum is enforced ---------- */
+  console.log("\n=== .xps checksums are verified on read ===");
+  {
+    /*
+     * An .xps is uncompressed and its entry sizes are self-consistent, so
+     * nothing but the trailing checksum can catch a corrupted byte: of 180
+     * single-bit flips across the three real samples, the entry bounds caught
+     * none. Flip a bit in each and every one has to be rejected now.
+     */
+    let caught = 0, tried = 0;
+    const missed = [];
+    for (const f of containers.filter(f => /\.xps$/i.test(f))) {
+      const b = fs.readFileSync(path.join(SAMPLES, f));
+      const L = xpsLayout(b);
+      /* the last byte of file data: entirely invisible to every other check */
+      const at = L.end - 1;
+      const m = Buffer.from(b);
+      m[at] ^= 0x01;
+      tried++;
+      let err = null;
+      vmc.openCard(blankCard("xpsbit" + tried));
+      try { vmc.saveImport(new Uint8Array(m)); } catch (e) { err = e.message; }
+      if (err) caught++;
+      else missed.push(f);
+    }
+    ok("a flipped data byte in a .xps is rejected (" + caught + " of " + tried + ")",
+       tried > 0 && caught === tried, missed.join(", "));
+
+    /* A writer that stops at the last byte of data is still readable, and so
+     * is one that left the field zeroed. */
+    const src = containers.find(f => /\.xps$/i.test(f));
+    const whole = fs.readFileSync(path.join(SAMPLES, src));
+    const L = xpsLayout(whole);
+
+    for (const [label, bytes] of [
+      ["with no trailing checksum at all", whole.subarray(0, L.end)],
+      ["with a zeroed checksum", (() => {
+        const z = Buffer.from(whole); z.writeUInt32LE(0, L.end); return z;
+      })()],
+    ]) {
+      let err = null;
+      vmc.openCard(blankCard("xpsopt" + label.length));
+      try { vmc.saveImport(new Uint8Array(bytes)); } catch (e) { err = e.message; }
+      ok("a .xps " + label + " is still accepted", err === null, err);
+    }
+  }
+
+  /* ---------- 3e. the .max header checksum ---------- */
+  console.log("\n=== .max carries a crc32 of itself ===");
+  {
+    /*
+     * The crc32 covers the whole file with its own four bytes read as zero.
+     * Nothing else that reads these files checks it, but it holds: all 273
+     * saves shipped with the Action Replay PS2 software agree with it, and so
+     * does the sample here, which came from a different writer.
+     */
+    const maxCrc = (b) => {
+      const zeroed = Buffer.from(b);
+      zeroed.writeUInt32LE(0, MAX_CRC_AT);
+      return crc32(zeroed) >>> 0;
+    };
+
+    let seen = 0, matched = 0;
+    const wrong = [];
+    for (const f of containers.filter(f => /\.max$/i.test(f))) {
+      const b = fs.readFileSync(path.join(SAMPLES, f));
+      seen++;
+      const want = maxCrc(b), stored = b.readUInt32LE(MAX_CRC_AT);
+      if (want === stored) matched++;
+      else wrong.push(f + ": stored 0x" + stored.toString(16) + " computed 0x" + want.toString(16));
+    }
+    ok("the checksum matches real .max files (" + matched + " of " + seen + ")",
+       seen > 0 && matched === seen, wrong.join(" | "));
+
+    /*
+     * LZARI fails quietly, so without this check a flipped bit reaches the
+     * card as corrupted file contents about 15% of the time. These four
+     * offsets are from that 15%: with the checksum test removed, every one of
+     * them imports "successfully" and writes the wrong bytes to the card.
+     */
+    const src = containers.find(f => /\.max$/i.test(f));
+    const good = fs.readFileSync(path.join(SAMPLES, src));
+
+    let caught = 0;
+    const missed = [];
+    for (const at of [0x969, 0xf12, 0x1eee, 0x2d03]) {
+      const b = Buffer.from(good);
+      b[at] ^= 0x01;
+      let err = null;
+      vmc.openCard(blankCard("maxbit" + at));
+      try { vmc.saveImport(new Uint8Array(b)); } catch (e) { err = e.message; }
+      if (err) caught++;
+      else missed.push("offset 0x" + at.toString(16) + " imported anyway");
+    }
+    ok("a flipped bit the entry bounds cannot see is rejected (" + caught + " of 4)",
+       caught === 4, missed.join(", "));
+
+    /* A writer that never filled the field in should still be readable. */
+    const unsigned = Buffer.from(good);
+    unsigned.writeUInt32LE(0, MAX_CRC_AT);
+    let err = null;
+    vmc.openCard(blankCard("maxnocrc"));
+    try { vmc.saveImport(new Uint8Array(unsigned)); } catch (e) { err = e.message; }
+    ok("a .max with a zeroed checksum is still accepted", err === null, err);
+  }
+
+  /* ---------- 3f. MAX export ---------- */
+  console.log("\n=== MAX export ===");
+
+  vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+
+  let maxDone = 0, maxMatched = 0, maxRound = 0, maxSigned = 0;
+  const maxProblems = [];
+
+  for (const name of saves) {
+    const original = vmc.list("/" + name).filter(e => !e.isDir && !isDot(e.name))
+      .map(e => ({ name: e.name, data: Buffer.from(vmc.readFile("/" + name + "/" + e.name)) }));
+
+    let mx;
+    try { mx = vmc.maxExport("/" + name); } catch (e) {
+      maxProblems.push(name + ": export threw " + e.message); continue;
+    }
+    maxDone++;
+
+    const cliOut = path.join(tmp, name.replace(/\W/g, "_") + ".max");
+    cli(srcCard, ["--max-export", "/" + name, cliOut]);
+    const d = cmpBytes(mx, new Uint8Array(fs.readFileSync(cliOut)));
+    if (d) maxProblems.push(name + ": CLI export differs, " + d);
+    else maxMatched++;
+
+    const b = Buffer.from(mx);
+    if ((crc32(zeroCrc(b)) >>> 0) === b.readUInt32LE(MAX_CRC_AT)) maxSigned++;
+
+    vmc.openCard(blankCard("maxrt-" + name.replace(/\W/g, "_")));
+    try { vmc.saveImport(mx); } catch (e) {
+      maxProblems.push(name + ": re-import threw " + e.message);
+      vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+      continue;
+    }
+
+    const back = vmc.list("/" + name).filter(e => !e.isDir && !isDot(e.name))
+      .map(e => ({ name: e.name, data: Buffer.from(vmc.readFile("/" + name + "/" + e.name)) }));
+
+    if (back.length === original.length && original.every((f, i) =>
+        back[i].name === f.name && back[i].data.equals(f.data))) maxRound++;
+    else maxProblems.push(name + ": round trip changed the files");
+
+    vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+  }
+
+  ok("every save on the card exports as .max (" + maxDone + " of " + saves.length + ")",
+     saves.length > 0 && maxDone === saves.length, maxProblems.slice(0, 2).join(" | "));
+  ok("the wasm and the CLI produce byte-identical .max (" + maxMatched + ")",
+     maxMatched === saves.length, maxProblems.slice(0, 2).join(" | "));
+  ok("export then import returns the same files (" + maxRound + ")",
+     maxRound === saves.length, maxProblems.slice(0, 2).join(" | "));
+  ok("every .max we write carries a valid crc32 (" + maxSigned + " of " + saves.length + ")",
+     maxSigned === saves.length, maxProblems.slice(0, 2).join(" | "));
+
+  vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+  ok("an exported .max is identified as MAX",
+     vmc.detect(vmc.maxExport("/" + saves[0])) === F.MAX);
+
+  /* ---------- 3g. LZARI streams with no trailing slack ---------- */
+  console.log("\n=== .max needs no trailing padding to read back ===");
+  {
+    /*
+     * An arithmetic decoder reads ahead of the character it is decoding, so
+     * the last few characters of a stream come out after its final byte has
+     * been consumed. Every .max in the wild carries 68 or more spare bytes and
+     * hides that, but mymcplusplus writes none - and our own decoder used to
+     * truncate 170 of the 273 Action Replay saves when handed its own
+     * re-compressed output. src/lzari.c invents a little slack instead.
+     *
+     * Strip every trailing zero, restamp the checksum, and the save has to
+     * come back whole.
+     */
+    vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+    let intact = 0;
+    const lost = [];
+
+    for (const name of saves) {
+      const want = vmc.list("/" + name).filter(e => !e.isDir && !isDot(e.name))
+        .map(e => e.name + ":" + Buffer.from(vmc.readFile("/" + name + "/" + e.name))
+                                     .toString("hex"));
+
+      const full = Buffer.from(vmc.maxExport("/" + name));
+      const bare = stripTrailingZeros(full);
+      bare.writeUInt32LE(crc32(zeroCrc(bare)) >>> 0, MAX_CRC_AT);
+
+      vmc.openCard(blankCard("bare-" + name.replace(/\W/g, "_")));
+      let err = null;
+      try { vmc.saveImport(bare); } catch (e) { err = e.message; }
+      if (err) { lost.push(name + ": " + err); }
+      else {
+        const got = vmc.list("/" + name).filter(e => !e.isDir && !isDot(e.name))
+          .map(e => e.name + ":" + Buffer.from(vmc.readFile("/" + name + "/" + e.name))
+                                       .toString("hex"));
+        if (JSON.stringify(got) === JSON.stringify(want)) intact++;
+        else lost.push(name + ": contents changed");
+      }
+      vmc.openCard(new Uint8Array(fs.readFileSync(srcCard)));
+    }
+
+    ok("a .max stripped of its padding still reads back whole (" + intact +
+       " of " + saves.length + ")", intact === saves.length, lost.slice(0, 3).join(" | "));
   }
 
   /* ---------- 4. malformed input ---------- */

@@ -41,6 +41,7 @@
     "-1011": "file is truncated",
     "-1012": "could not decompress the save",
     "-1013": "the card already has a save with that name",
+    "-1014": "the save file is damaged (its checksum does not match)",
     "-1001": "short read",
     "-1002": "allocation failed",
     "-1003": "truncated or malformed container",
@@ -105,6 +106,7 @@
       saveImport: Module.cwrap("vmc_save_import", "number", ["number", "number"]),
       xpsExport:  Module.cwrap("vmc_xps_export", "number", ["string", "number"]),
       cbsExport:  Module.cwrap("vmc_cbs_export", "number", ["string", "number"]),
+      maxExport:  Module.cwrap("vmc_max_export", "number", ["string", "number"]),
       saveDetect: Module.cwrap("vmc_save_detect", "number", ["number", "number"]),
       saveDirName: Module.cwrap("vmc_save_dirname", "string", ["number", "number"]),
       blankCard:  Module.cwrap("vmc_blank_card", "number", ["number"]),
@@ -346,6 +348,15 @@
       cbsExport(path) {
         const lp = scratchPtr(4);
         const ptr = c.cbsExport(path, lp);
+        const len = view().getInt32(lp, true);
+        if (!ptr) throw new VmcError(len, "exporting " + path);
+        return takeBuffer(ptr, len);
+      },
+
+      /** Export a save as an Action Replay MAX .max. */
+      maxExport(path) {
+        const lp = scratchPtr(4);
+        const ptr = c.maxExport(path, lp);
         const len = view().getInt32(lp, true);
         if (!ptr) throw new VmcError(len, "exporting " + path);
         return takeBuffer(ptr, len);

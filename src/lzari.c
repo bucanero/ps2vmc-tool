@@ -66,10 +66,28 @@ static void FlushBitBuffer(void)  /* Send remaining bits */
 }
 
 static unsigned int  buffer2 = 0, mask2 = 0;
+
+/*
+ * Bytes GetBit() has had to invent because the input ran out. The arithmetic
+ * decoder reads ahead of the character it is decoding, so the last few
+ * characters of a stream come out after its last byte has been consumed;
+ * stopping at that point drops them. They are supplied as zeros, which is what
+ * FlushBitBuffer() writes at the end of a stream, and counted so that a
+ * corrupt stream still cannot decode forever.
+ */
+static int  past_end = 0;
+
 static int GetBit(void)  /* Get one bit (0 or 1) */
 {
 	if ((mask2 >>= 1) == 0) {
-		buffer2 = xgetc(infile);  mask2 = 128;
+		int c = xgetc(infile);
+
+		if (c < 0) {
+			c = 0;
+			past_end++;
+		}
+		buffer2 = (unsigned int)c;
+		mask2 = 128;
 	}
 	return ((buffer2 & mask2) != 0);
 }
@@ -81,6 +99,9 @@ static int GetBit(void)  /* Get one bit (0 or 1) */
 #define THRESHOLD	2   /* encode string into position and length
 						   if match_length is greater than this */
 #define NIL			N	/* index for root of binary search trees */
+
+/* How far past the end of the input the decoder may read before giving up. */
+#define LZARI_FLUSH_SLACK 8
 
 static unsigned char  text_buf[N + F - 1];	/* ring buffer of size N,
 			with extra F-1 bytes to facilitate string comparison */
@@ -462,6 +483,7 @@ int unlzari(unsigned char *in, int insz, unsigned char *out, int outsz)
     buffer2 = 0;
     mask = 128;
     mask2 = 0;
+    past_end = 0;
 
     infile = in;
     infilel = in + insz;
@@ -479,7 +501,9 @@ int unlzari(unsigned char *in, int insz, unsigned char *out, int outsz)
 	for (i = 0; i < N - F; i++) text_buf[i] = ' ';
 	r = N - F;
 	for (count = 0; count < textsize; ) {
-        if (infile >= infilel) break;
+        /* LZARI_FLUSH_SLACK bytes of invented zeros are enough to finish a
+         * complete stream; needing more means the input really did run out. */
+        if (past_end > LZARI_FLUSH_SLACK) break;
 		c = DecodeChar();
 		if (c < 256) {
 			xputc(c, outfile);  text_buf[r++] = c;

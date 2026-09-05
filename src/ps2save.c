@@ -228,6 +228,19 @@ const char *ps2save_format_name(int fmt)
 	}
 }
 
+const char *ps2save_error_name(int err)
+{
+	switch (err) {
+	case PS2SAVE_ERR_MEMORY:     return "out of memory";
+	case PS2SAVE_ERR_FORMAT:     return "not a save container we recognise";
+	case PS2SAVE_ERR_TRUNCATED:  return "the file is truncated";
+	case PS2SAVE_ERR_DECOMPRESS: return "the compressed data is unreadable";
+	case PS2SAVE_ERR_EXISTS:     return "the card already has that save";
+	case PS2SAVE_ERR_CHECKSUM:   return "the file is damaged, its checksum does not match";
+	default:                     return "unknown error";
+	}
+}
+
 /* ------------------------------------------------------------------ */
 /* CodeBreaker (.cbs)                                                 */
 /* ------------------------------------------------------------------ */
@@ -459,6 +472,39 @@ static size_t max_advance(size_t off, uint32_t length)
 	return ((end + 15) / 16) * 16 - 8;
 }
 
+/*
+ * A .max header carries a crc32 of the whole file, computed with its own four
+ * bytes taken as zero. Nothing else that reads these files checks it - neither
+ * psv-save-converter nor mymcplusplus - but it holds: every one of the 273
+ * saves shipped with the Action Replay PS2 software agrees with it, as does
+ * the sample here from a different writer.
+ *
+ * It is worth checking because LZARI fails quietly. A single flipped bit in
+ * the stream is caught by the entry bounds only about 85% of the time; the
+ * rest of the time the save lands on the card with corrupted contents, and
+ * once with a garbage filename.
+ *
+ * A stored zero means the writer left the field alone, so that is not treated
+ * as a mismatch.
+ */
+static uint32_t max_crc(const uint8_t *buf, size_t len)
+{
+	static const uint8_t zeros[4] = { 0 };
+	size_t at = offsetof(max_header_t, crc);
+	uLong c;
+
+	c = crc32(0, buf, (uInt)at);
+	c = crc32(c, zeros, sizeof(zeros));
+	c = crc32(c, buf + at + 4, (uInt)(len - at - 4));
+
+	return (uint32_t)c;
+}
+
+static int max_crc_ok(const uint8_t *buf, size_t len, uint32_t stored)
+{
+	return stored == 0 || max_crc(buf, len) == stored;
+}
+
 static int parse_max(const uint8_t *buf, size_t len, ps2save_t *out)
 {
 	max_header_t header;
@@ -476,6 +522,9 @@ static int parse_max(const uint8_t *buf, size_t len, ps2save_t *out)
 	    !header.decompressedSize || header.decompressedSize > SANE_FILE_SIZE ||
 	    !header.compressedSize || header.dirName[0] == '\0')
 		return PS2SAVE_ERR_FORMAT;
+
+	if (!max_crc_ok(buf, len, header.crc))
+		return PS2SAVE_ERR_CHECKSUM;
 
 	/* decompressedSize doubles as the first word of the stream. */
 	stream_off = sizeof(max_header_t) - 4;
@@ -593,10 +642,55 @@ static int xps_read_entry(const uint8_t *buf, size_t len, size_t off,
 	return 0;
 }
 
+/*
+ * The four bytes that close an .xps, over everything from the directory entry
+ * to the last byte of file data:
+ *
+ *     sum = 0;  for each byte b:  sum += b << (sum % 24)
+ *
+ * Each byte is shifted by the running sum's own remainder, so it depends on
+ * order as well as content. Recovered from the divide-by-24 loop at 0x4093c1
+ * in PS2SaveConverter.exe and confirmed against three files from three
+ * different writers.
+ */
+static uint32_t xps_checksum(const uint8_t *p, size_t len)
+{
+	uint32_t sum = 0;
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		sum += (uint32_t)p[i] << (sum % 24);
+
+	return sum;
+}
+
+/*
+ * The four bytes after the body are that checksum. Not every writer appends
+ * them - the reader accepts a file that stops at the last byte of data - but
+ * when they are there they have to agree, because nothing else in an .xps can
+ * catch a corrupted byte. The container is uncompressed and the entry sizes
+ * are all self-consistent, so a flipped bit inside a file just becomes a
+ * flipped bit on the card: of 180 single-bit flips across the three real
+ * samples here, the entry bounds caught none at all.
+ *
+ * As with .max, a stored zero is read as a writer that left the field alone.
+ */
+static int xps_trailer_ok(const uint8_t *buf, size_t body, size_t end, size_t len)
+{
+	uint32_t stored;
+
+	if (len - end != 4)
+		return 1;
+
+	memcpy(&stored, buf + end, 4);
+
+	return stored == 0 || stored == xps_checksum(buf + body, end - body);
+}
+
 static int parse_xps(const uint8_t *buf, size_t len, ps2save_t *out)
 {
 	xps_entry_t entry;
-	size_t off = 0x15, step;
+	size_t off = 0x15, step, body;
 	int i, r, count;
 
 	if (len < 0x15 || memcmp(buf + 4, XPS_MAGIC, 16) != 0)
@@ -628,6 +722,7 @@ static int parse_xps(const uint8_t *buf, size_t len, ps2save_t *out)
 	if (off + 4 > len)
 		return PS2SAVE_ERR_TRUNCATED;
 	off += 4;                              /* size of the body that follows */
+	body = off;
 
 	r = xps_read_entry(buf, len, off, &entry, &step);
 	if (r < 0)
@@ -673,6 +768,11 @@ static int parse_xps(const uint8_t *buf, size_t len, ps2save_t *out)
 			return r;
 		}
 		off += entry.length;
+	}
+
+	if (!xps_trailer_ok(buf, body, off, len)) {
+		ps2save_free(out);
+		return PS2SAVE_ERR_CHECKSUM;
 	}
 
 	return 0;
@@ -908,28 +1008,6 @@ static void save_title(const ps2save_t *save, char *line1, size_t l1sz,
 	sjis[sjsz - 1 < 68 ? sjsz - 1 : 68] = '\0';
 }
 
-/*
- * The four bytes that close an .xps, over everything from the directory entry
- * to the last byte of file data:
- *
- *     sum = 0;  for each byte b:  sum += b << (sum % 24)
- *
- * Each byte is shifted by the running sum's own remainder, so it depends on
- * order as well as content. Recovered from the divide-by-24 loop at 0x4093c1
- * in PS2SaveConverter.exe and confirmed against three files from three
- * different writers.
- */
-static uint32_t xps_checksum(const uint8_t *p, size_t len)
-{
-	uint32_t sum = 0;
-	size_t i;
-
-	for (i = 0; i < len; i++)
-		sum += (uint32_t)p[i] << (sum % 24);
-
-	return sum;
-}
-
 static void put_u32(uint8_t *p, uint32_t v)
 {
 	p[0] = (uint8_t)v;
@@ -1136,6 +1214,130 @@ int ps2save_build_cbs(const ps2save_t *save, uint8_t **out, size_t *out_len)
 
 	*out = buf;
 	*out_len = sizeof(cbs_header_t) + comp_len;
+	return 0;
+}
+
+/*
+ * Trailing zeros after the LZARI stream. The Action Replay software writes 68
+ * or 136 bytes here - uninitialised memory rather than deliberate padding, but
+ * every one of its 273 saves carries some. It matters because an arithmetic
+ * decoder reads ahead of the character it is decoding: a decoder that stops at
+ * the last input byte drops the final few characters, which is exactly the bug
+ * this repository's own unlzari() had until the slack in src/lzari.c was
+ * added. Writing the padding keeps our output readable by decoders that still
+ * have it.
+ */
+#define MAX_PAD  68
+
+/*
+ * A .max is a fixed header followed by one LZARI stream holding each file
+ * behind a length and a name, on a 16-byte grid offset by 8.
+ *
+ * Our lzari() emits the stream's four-byte length prefix itself, and that word
+ * is also the header's last field, so the stream is compressed straight into
+ * the buffer four bytes before the header ends.
+ */
+int ps2save_build_max(const ps2save_t *save, uint8_t **out, size_t *out_len)
+{
+	char line1[80], line2[80], sjis[80], title[160];
+	max_header_t header;
+	max_entry_t e;
+	uint8_t *plain, *buf;
+	size_t plain_len = 0, cap, total, title_len, o = 0;
+	int i, made;
+
+	if (!save || !out || !out_len || save->file_count <= 0)
+		return PS2SAVE_ERR_FORMAT;
+
+	*out = NULL;
+	*out_len = 0;
+
+	/* The two icon.sys title lines run together with no separator, the way
+	 * the Action Replay software writes them: 247 of its 273 saves match a
+	 * plain concatenation, and the rest differ only where its Shift-JIS
+	 * punctuation table is wider than ours. (A .cbs joins them with a space -
+	 * that is CodeBreaker's convention, not this one.) */
+	save_title(save, line1, sizeof(line1), line2, sizeof(line2), sjis, sizeof(sjis));
+	snprintf(title, sizeof(title), "%s%s", line1, line2);
+
+	for (i = 0; i < save->file_count; i++) {
+		plain_len += sizeof(max_entry_t) + save->files[i].size;
+		plain_len = max_advance(plain_len, 0);
+	}
+
+	if (!plain_len || plain_len > SANE_SAVE_SIZE)
+		return PS2SAVE_ERR_FORMAT;
+
+	/* calloc: the gaps the grid leaves between entries have to be zeros. */
+	plain = calloc(1, plain_len);
+	if (!plain)
+		return PS2SAVE_ERR_MEMORY;
+
+	for (i = 0; i < save->file_count; i++) {
+		const ps2save_file_t *f = &save->files[i];
+
+		memset(&e, 0, sizeof(e));
+		e.length = f->size;
+		strncpy(e.name, f->name, sizeof(e.name) - 1);
+
+		memcpy(plain + o, &e, sizeof(e));
+		o += sizeof(e);
+		memcpy(plain + o, f->data, f->size);
+		o += f->size;
+		o = max_advance(o, 0);
+	}
+
+	/* Arithmetic coding can expand incompressible input; leave room and treat
+	 * filling the buffer as a failure rather than shipping a cut stream. */
+	cap = plain_len + plain_len / 4 + 65536;
+
+	total = sizeof(max_header_t) - 4 + cap + MAX_PAD;
+	buf = calloc(1, total);
+	if (!buf) {
+		free(plain);
+		return PS2SAVE_ERR_MEMORY;
+	}
+
+	made = lzari(plain, (int)plain_len, buf + sizeof(max_header_t) - 4, (int)cap);
+	free(plain);
+
+	if (made <= 0 || (size_t)made >= cap) {
+		free(buf);
+		return PS2SAVE_ERR_DECOMPRESS;
+	}
+
+	memset(&header, 0, sizeof(header));
+	memcpy(header.magic, MAX_MAGIC, sizeof(header.magic));
+	strncpy(header.dirName, save->dirname, sizeof(header.dirName) - 1);
+
+	/* iconSysName is a fixed-width field, not a C string: a 32-character
+	 * title fills it with no terminator, the way the Action Replay software
+	 * writes "KINGDOMHEARTS/07Agrabah: Storage". Reserving a NUL byte would
+	 * drop that last character. The header is zeroed, so shorter titles are
+	 * still NUL-padded. */
+	title_len = strlen(title);
+	if (title_len > sizeof(header.iconSysName))
+		title_len = sizeof(header.iconSysName);
+	memcpy(header.iconSysName, title, title_len);
+	header.numFiles = (uint32_t)save->file_count;
+	header.decompressedSize = (uint32_t)plain_len;
+
+	/* compressedSize is misnamed in every file we have. The Action Replay
+	 * software stores the decompressed size here, and that is what this
+	 * follows; mymcplusplus reads either that or a real compressed length,
+	 * and nothing else looks at the field at all. */
+	header.compressedSize = (uint32_t)plain_len;
+
+	/* This overwrites the length prefix lzari() wrote at the same place with
+	 * the identical value. */
+	memcpy(buf, &header, sizeof(header));
+
+	total = sizeof(max_header_t) - 4 + (size_t)made + MAX_PAD;
+	header.crc = max_crc(buf, total);
+	memcpy(buf + offsetof(max_header_t, crc), &header.crc, sizeof(header.crc));
+
+	*out = buf;
+	*out_len = total;
 	return 0;
 }
 

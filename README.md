@@ -38,6 +38,7 @@ Available commands:
 	 --psv-export, -psv <mc path> <output filepath>
 	 --xps-export, -xps <mc path> <output filepath>
 	 --cbs-export, -cbs <mc path> <output filepath>
+	 --max-export, -max <mc path> <output filepath>
 ```
 
 ---

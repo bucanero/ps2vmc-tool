@@ -69,7 +69,7 @@ jobs:
         # the same for the two containers we write ourselves. Byte-identity
         # with the original is checked by web-ps2/test/savefmt.js; here it is
         # enough that what we write comes back as the save that went in.
-        for fmt in xps cbs; do
+        for fmt in xps cbs max; do
           ./ps2vmc-tool samples/ps2card.vmc --$fmt-export /BESLES-50325 smoke.$fmt
           ./ps2vmc-tool round.vmc --mc-create
           ./ps2vmc-tool round.vmc --import smoke.$fmt | grep -q "PAYNE.ICO"
@@ -93,7 +93,7 @@ jobs:
         ./ps1vmc-tool new.mcr --mc-create
         ./ps1vmc-tool new.mcr --mc-info | grep -q "Data slots: 15"
 
-        rm -f smoke.psu smoke.xps smoke.cbs new.vmc round.vmc one.vmc fmt.vmc new.mcr
+        rm -f smoke.psu smoke.xps smoke.cbs smoke.max new.vmc round.vmc one.vmc fmt.vmc new.mcr
         echo "smoke tests passed"
 
     - name: Get short SHA

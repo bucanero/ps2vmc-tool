@@ -50,6 +50,7 @@ enum ps2vmc_cmd {
 	CMD_PSV_EXPORT,
 	CMD_XPS_EXPORT,
 	CMD_CBS_EXPORT,
+	CMD_MAX_EXPORT,
 	CMD_ICONS_PNG,
 	CMD_EXTRACT,
 	CMD_MCFORMAT,
@@ -91,6 +92,7 @@ static void print_usage(int argc, char **argv)
 	printf("\t --psv-export, -psv <mc path> <output filepath>\n");
 	printf("\t --xps-export, -xps <mc path> <output filepath>\n");
 	printf("\t --cbs-export, -cbs <mc path> <output filepath>\n");
+	printf("\t --max-export, -max <mc path> <output filepath>\n");
 	printf("\n");
 }
 
@@ -896,7 +898,8 @@ static int cmd_save_import(const char *input)
 	free(buf);
 
 	if (r < 0) {
-		fprintf(stderr, "Error: can't read '%s' as a PS2 save container (%d)\n", input, r);
+		fprintf(stderr, "Error: can't read '%s' as a PS2 save container: %s (%d)\n",
+			input, ps2save_error_name(r), r);
 		return r;
 	}
 
@@ -1176,6 +1179,14 @@ int main(int argc, char **argv)
 			cmd = CMD_CBS_EXPORT;
 			cmd_args = &argv[3];
 		}
+		else if (!strcmp(argv[2], "--max-export") || !strcmp(argv[2], "-max")) {
+			if (argc < 4) {
+				print_usage(argc, argv);
+				return 1;
+			}
+			cmd = CMD_MAX_EXPORT;
+			cmd_args = &argv[3];
+		}
 		else if (!strcmp(argv[2], "--psv-export") || !strcmp(argv[2], "-psv") ||
 			 !strcmp(argv[2], "-pv")) {
 			if (argc < 4) {
@@ -1276,6 +1287,12 @@ int main(int argc, char **argv)
 					    ps2save_build_cbs);
 			if (r < 0)
 				fprintf(stderr, "Error: can't export save to CBS... (%d)\n", r);
+		}
+		else if (cmd == CMD_MAX_EXPORT) {
+			r = cmd_save_export(cmd_args[0], cmd_args[1], "a MAX",
+					    ps2save_build_max);
+			if (r < 0)
+				fprintf(stderr, "Error: can't export save to MAX... (%d)\n", r);
 		}
 		else if (cmd == CMD_MCFORMAT) {
 			r = cmd_mcformat();

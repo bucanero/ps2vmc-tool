@@ -161,7 +161,7 @@ node web-ps2/test/difftest.js    # wasm vs CLI, 102 checks
 node web-ps2/test/icontest.js    # icon parsing and animation, 25 checks
 node web-ps2/test/hexedit.js     # hex editing on both cards, 44 checks
 node web-ps2/test/psv.js         # crypto, PSV/VMP/MCX signing, CLI options, 104 checks
-node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers, XPS and CBS writers, 45 checks
+node web-ps2/test/savefmt.js     # .cbs/.max/.xps readers, all three writers, 57 checks
 ```
 
 `difftest.js` runs each operation twice — once through the wasm module, once
@@ -244,12 +244,20 @@ so a truncated file decompresses "successfully" into a short buffer. Entries are
 bounded by what actually came out rather than by the size the header claims, and
 the buffer is `calloc`ed so a short stream reads as zeros instead of stale heap.
 
-And the header's `compressedSize` cannot be trusted either — it under-reports.
-`samples/BASLUS-20963FF1200.max` claims 17529 for a stream that is really 17533
-bytes, so feeding the decoder only what the header allows starves it: it returns
-168 bytes short and the last file in the save is cut off. Everything after the
-header goes to the decoder instead, which is safe because the stream carries its
-own length in its first word.
+And the header's `compressedSize` cannot be trusted either. Three writers, three
+meanings:
+
+| writer | what `compressedSize` holds |
+| --- | --- |
+| Action Replay PS2 software (273 saves) | the **decompressed** size |
+| `samples/BASLUS-20963FF1200.max` | the body length, no `+ 4` |
+| mymcplusplus | the body length `+ 4` |
+
+Reading it at all is therefore a mistake. `samples/BASLUS-20963FF1200.max` claims
+17529 for a stream that is really 17533 bytes, so feeding the decoder only what
+the header allows starves it: it returns 168 bytes short and the last file in the
+save is cut off. Everything after the header goes to the decoder instead, which
+is safe because the stream carries its own length in its first word.
 
 The reference converter reads that save with the same 168-byte shortfall and
 gets away with it: the bytes it never wrote come from a fresh `malloc` of 92 KB,
@@ -258,11 +266,105 @@ which the allocator serves as zero pages, and the tail of that particular
 Our output for all three sample containers is byte-identical to the reference's,
 this file included.
 
-### Writing .xps and .cbs
+### The .max checksum
 
-*Export ▾* offers `.XPS` and `.CBS` alongside `.PSU` and `.PSV`. `.max` is not
-written — its header under-reports both of its sizes, so a file we produced
-would be as awkward to read back as the ones in the wild.
+The header's third field is a `crc32` of the whole file, computed with its own
+four bytes read as zero. Nothing else that reads these files checks it —
+neither psv-save-converter nor mymcplusplus — but it holds everywhere we can
+test it: all **273 saves** shipped with the Action Replay PS2 software agree
+with it, and so does `samples/BASLUS-20963FF1200.max`, which came from a
+different writer. zlib's `crc32()` computes it directly, so verifying costs
+nothing now that zlib is linked anyway.
+
+It is worth checking because LZARI fails quietly. Flipping one bit inside the
+compressed stream of 25 of those saves, 16 times each:
+
+| | without the check | with it |
+| --- | --- | --- |
+| rejected | 339 (85%) | **400 (100%)** |
+| accepted, contents corrupted | 61 (15%) | 0 |
+
+One of those 61 wrote a save containing a file called `Ί�` onto the card. A
+stored zero is taken to mean the writer never filled the field in, and is not
+treated as a mismatch.
+
+The other two containers are covered as well. A `.cbs` body is a zlib stream, so
+`inflate()` verifies its Adler-32 and a flipped bit comes back as `the
+compressed data is unreadable`. A `.xps` is checked against its own trailing
+checksum, below.
+
+### Writing .max
+
+The 273 Action Replay saves made this one worth doing, because they show what
+the original software wrote. Feeding each of them back through our own encoder
+produces **byte-identical compressed output** in all 273 cases — the stream we
+emit is a prefix of theirs, differing only in that they append 68 or 136 spare
+bytes of uninitialised memory. Re-exporting a save reproduces the original file
+except for that padding, the checksum over it, and the tool's junk in the
+alignment gaps: for `007NIGHT.PWS` exactly 14 bytes differ, every one of them
+inside a gap between entries, with all names and file data identical.
+
+Two header details came from the corpus rather than from any documentation:
+
+* **`iconSysName` is the two title lines run together, with no separator** — 247
+  of 273 match a plain concatenation, against 130 for the rule mymcplusplus
+  applies. A `.cbs` joins the same two lines *with* a space, so the containers
+  genuinely differ. The remaining mismatches are Shift-JIS punctuation where the
+  original emits CP1252 bytes (`\x92` for a curly apostrophe) and we emit ASCII.
+* **It is a fixed-width field, not a C string.** A 32-character title fills all
+  32 bytes with no terminator, as in `KINGDOMHEARTS/07Agrabah: Storage`.
+  Reserving a NUL dropped the last character of four saves' titles.
+
+`compressedSize` is written as the *decompressed* size, which is what the
+Action Replay software does. The field is misnamed in every file we have; see
+the table above.
+
+The output is verified two ways over the whole corpus: our own reader gets back
+what went in for all 273, and so does mymcplusplus's independent decoder, which
+also confirms all 273 checksums we compute.
+
+### Trailing padding, and why the decoder needed fixing
+
+Every `.max` in the wild ends with spare bytes, and that hid a real bug in
+`unlzari()`. An arithmetic decoder reads ahead of the character it is decoding,
+so the last few characters of a stream only come out after its final byte has
+been consumed — and the decoder stopped exactly there, at `infile >= infilel`.
+Past-the-end reads also returned `-1`, feeding 1-bits where the encoder's flush
+writes zeros.
+
+Nothing noticed, because no file it had ever been given was tight. Compressing
+each of the 273 saves with our own encoder and reading the result straight back
+truncated **170 of them**, losing up to 61 bytes — one match can emit 60. That
+is not hypothetical: mymcplusplus writes no padding at all, so those files were
+being silently docked their last few bytes.
+
+`src/lzari.c` now supplies up to `LZARI_FLUSH_SLACK` invented zero bytes past
+the end and counts them, so a complete stream finishes and a corrupt one still
+cannot decode forever. All 273 now round-trip intact. The writer appends 68
+zeros anyway, matching the original software, for the sake of any other decoder
+that still has the bug.
+
+### Corpus testing
+
+`.max` handling is checked against the 273 saves distributed with the Action
+Replay PS2 software, which are `.PWS` files but plain MAX containers. Each is
+imported and compared, file by file, against an independent reading by
+mymcplusplus's Python LZARI decoder: **273 of 273 agree** on the directory name,
+the file list, every size and every SHA-1. Each is then exported as `.psu`,
+`.xps` and `.cbs` and read back — 819 round trips, all intact. That corpus is
+not in this repository; the tests here work from `samples/`.
+
+It settled the `compressedSize` table above, and turned up two details worth
+knowing. 109 of the 273 have a `decompressedSize` rounded up to a whole number
+of KB, and the slack after the last entry is uninitialised memory from the
+original tool rather than padding — readable strings like `DMF`, `DMR` and
+`Dice` sit in it. Both readers stop after `numFiles` entries, so none of it is
+parsed. Five of the saves contain a zero-length file, and the longest filename
+is 31 characters, which is the most a card entry can hold.
+
+### Writing .xps, .cbs and .max
+
+*Export ▾* offers `.XPS`, `.CBS` and `.MAX` alongside `.PSU` and `.PSV`.
 
 The two description strings a `.xps` carries are free-form: one real sample holds
 its authoring tool's name, another holds the save's title. Ours get the two title
@@ -353,6 +455,27 @@ header CRC at offset 12 is a plain CRC32 (poly `0xEDB88320`, init and final xor
 `0xFFFFFFFF`) over the whole file with that field zeroed. Verified against
 `samples/BASLUS-20963FF1200.max`, whose stored `0xEA258A15` matches exactly. It
 is the missing piece if a `.max` writer is ever added.
+
+### Verifying the .xps checksum
+
+That checksum is checked on read, and it is the only thing standing between a
+corrupted `.xps` and the card. The container is uncompressed and every entry
+size is self-consistent, so a flipped bit inside a file is simply a flipped bit
+on the card — there is nothing for the bounds checks to notice. Flipping one bit
+in each of the three real samples, 60 times each:
+
+| | without the check | with it |
+| --- | --- | --- |
+| rejected | 0 (0%) | **180 (100%)** |
+| accepted, contents corrupted | 178 (99%) | 0 |
+
+That is a worse starting point than `.max`, where LZARI at least turned 85% of
+corruptions into structural nonsense the entry bounds could reject.
+
+Two files are still accepted without complaint: one that stops at the last byte
+of data, because not every writer appends the trailer, and one whose four bytes
+are zero, read as a writer that left the field alone. Both mirror how the `.max`
+checksum is treated.
 
 ### Tests
 

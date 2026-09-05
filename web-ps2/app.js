@@ -315,7 +315,8 @@ function render() {
       { text: "PSU  (uLaunchELF / EMS)", fn: () => exportPsu(save) },
       { text: "PSV  (PS3, signed)", fn: () => exportPsv(save) },
       { text: "XPS  (Xploder / SharkPort)", fn: () => exportContainer(save, "xps") },
-      { text: "CBS  (CodeBreaker)", fn: () => exportContainer(save, "cbs") }
+      { text: "CBS  (CodeBreaker)", fn: () => exportContainer(save, "cbs") },
+      { text: "MAX  (Action Replay)", fn: () => exportContainer(save, "max") }
     ])));
     acts.appendChild(mkSaveBtn("Delete", "danger", () => deleteSave(save)));
     body.appendChild(acts);
@@ -711,17 +712,16 @@ function exportPsv(save) {
 }
 
 /**
- * Export a save as an Xploder/SharkPort .xps or a CodeBreaker .cbs.
+ * Export a save as one of the third-party containers.
  *
- * Built by the same C the CLI uses, so the two produce identical files. There
- * is no .max writer: that header under-reports its own sizes.
+ * Built by the same C the CLI uses, so the two produce identical files.
  */
 function exportContainer(save, ext) {
   if (!isSave(save)) return;
+  const build = { xps: vmc.xpsExport, cbs: vmc.cbsExport, max: vmc.maxExport };
   try {
-    const bytes = ext === "cbs" ? vmc.cbsExport(save.path)
-                                : vmc.xpsExport(save.path);
-    download(bytes, safeName(save.name, "save") + "." + ext);
+    download(build[ext].call(vmc, save.path),
+             safeName(save.name, "save") + "." + ext);
   } catch (e) {
     toast("Could not export " + save.name + " — " + e.message, "err");
   }
