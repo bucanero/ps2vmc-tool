@@ -26,6 +26,14 @@ CFLAGS	=	-g -O3 -W -I./include -I. -D_GNU_SOURCE -DECB=1
 #     make ZLIB=-l:libz.a
 ZLIB ?=	-lz
 
+# libm. The icon renderer calls sqrtf/tanf/floorf/ceilf/fminf/fmaxf; macOS
+# folds those into libc but Linux keeps them separate, so the link fails there
+# without this. Which of them survive as real symbols depends on the compiler
+# and the optimisation level - at -O0 six of them do - so this is not something
+# inlining can be trusted to hide. Kept apart from ZLIB because the Windows
+# builds override that one.
+MATH ?=	-lm
+
 # Shared: byte helpers, AES, and the PSV/VMP signature (HMAC-SHA1 over SHA-1)
 COMMON_SRC =	src/util.c src/aes.c src/sha1.c src/hmac.c src/psv_resign.c src/ps2png.c
 
@@ -48,10 +56,10 @@ ps1: $(PS1TOOL)
 ps2: $(PS2TOOL)
 
 $(PS1TOOL): $(PS1_OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(ZLIB)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(ZLIB) $(MATH)
 
 $(PS2TOOL): $(PS2_OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(ZLIB)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(ZLIB) $(MATH)
 
 # -MMD -MP records which headers each object used, so editing a header
 # rebuilds whatever depends on it instead of leaving a stale object behind.
