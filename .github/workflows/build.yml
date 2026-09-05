@@ -34,6 +34,62 @@ jobs:
       run: |
         make
 
+    # These binaries are native, so the runner can actually execute them: the
+    # Windows jobs only cross-build or run under MSYS, where this never ran.
+    # Every check below reads real output, so a command that fails, or that
+    # succeeds while printing the wrong thing, fails the build.
+    - name: Smoke test the binaries
+      run: |
+        set -eo pipefail
+
+        # card info and listing
+        ./ps2vmc-tool samples/ps2card.vmc --mc-info | grep -q "MC size:    8 MB"
+        ./ps2vmc-tool samples/ps2card.vmc --list / | grep -q "BESLES-50325"
+
+        # a card built from nothing is a real 8 MB card, and holds no saves
+        ./ps2vmc-tool new.vmc --mc-create
+        ./ps2vmc-tool new.vmc --mc-info | grep -q "MC size:    8 MB"
+        if ./ps2vmc-tool new.vmc --list / | grep "<dir>" | grep -qE "^[A-Za-z]"; then
+          echo "::error::a freshly created card already holds a save"; exit 1
+        fi
+
+        # formatting an existing card has to wipe the saves off it
+        cp samples/ps2card.vmc fmt.vmc
+        ./ps2vmc-tool fmt.vmc --mc-format
+        if ./ps2vmc-tool fmt.vmc --list / | grep "<dir>" | grep -qE "^[A-Za-z]"; then
+          echo "::error::--mc-format left a save behind"; exit 1
+        fi
+
+        # export a save, then read it back into the card just created
+        ./ps2vmc-tool samples/ps2card.vmc --psu-export /BESLES-50325 smoke.psu
+        ./ps2vmc-tool new.vmc --import smoke.psu | grep -q "PAYNE.ICO"
+        ./ps2vmc-tool new.vmc --list /BESLES-50325 | grep -q "PAYNE.ICO"
+
+        # the same for the .xps we write ourselves
+        ./ps2vmc-tool samples/ps2card.vmc --xps-export /BESLES-50325 smoke.xps
+        ./ps2vmc-tool xps.vmc --mc-create
+        ./ps2vmc-tool xps.vmc --import smoke.xps | grep -q "PAYNE.ICO"
+        ./ps2vmc-tool xps.vmc --list /BESLES-50325 | grep -q "PAYNE.ICO"
+
+        # every third-party container, each onto its own blank card so the
+        # ones holding the same save cannot collide
+        for c in samples/*.cbs samples/*.max samples/*.xps; do
+          ./ps2vmc-tool one.vmc --mc-create
+          ./ps2vmc-tool one.vmc --import "$c" | grep -q "Adding"
+          # the save has to land on the card, not merely parse
+          ./ps2vmc-tool one.vmc --list / | grep "<dir>" | grep -qE "^[A-Za-z]"
+          echo "  imported $c"
+        done
+
+        # the PS1 tool, including a card of its own
+        ./ps1vmc-tool samples/epsxe000.mcr --mc-info | grep -q "Data slots: 15"
+        ./ps1vmc-tool samples/epsxe000.mcr --list | grep -q "SLUS-01251"
+        ./ps1vmc-tool new.mcr --mc-create
+        ./ps1vmc-tool new.mcr --mc-info | grep -q "Data slots: 15"
+
+        rm -f smoke.psu smoke.xps new.vmc xps.vmc one.vmc fmt.vmc new.mcr
+        echo "smoke tests passed"
+
     - name: Get short SHA
       run: echo "sha_name=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
 

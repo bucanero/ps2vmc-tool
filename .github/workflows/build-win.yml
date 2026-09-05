@@ -10,6 +10,10 @@ jobs:
   # x64 Windows build via MSYS2. 32-bit is handled by the win32-cross job below,
   # because MSYS2 no longer ships a working 32-bit toolchain — its MINGW32 target
   # silently produced x86-64 binaries.
+  #
+  # Both jobs here only check that the binaries built and are the right
+  # architecture. The functional smoke test lives in build.yml, which produces
+  # native binaries the runner can actually execute.
   msys:
     runs-on: windows-2022
     strategy:
@@ -50,44 +54,6 @@ jobs:
             file "$f" | grep -q "PE32+ executable" && file "$f" | grep -q "x86-64" || {
               echo "::error::$f is not a 64-bit PE: $(file -b "$f")"; exit 1; }
           done
-
-      # This job runs on Windows, so the binaries it just built can actually be
-      # run. Every check below reads real output: a command that fails, or
-      # succeeds while printing the wrong thing, fails the build.
-      - name: Smoke test the binaries
-        run: |
-          # card info and listing
-          ./ps2vmc-tool.exe samples/ps2card.vmc --mc-info | grep -q "MC size:    8 MB"
-          ./ps2vmc-tool.exe samples/ps2card.vmc --list / | grep -q "BESLES-50325"
-
-          # export a save, then read it back into a freshly formatted card
-          cp samples/ps2card.vmc smoke.vmc
-          ./ps2vmc-tool.exe samples/ps2card.vmc --psu-export /BESLES-50325 smoke.psu
-          ./ps2vmc-tool.exe smoke.vmc --mc-format
-          ./ps2vmc-tool.exe smoke.vmc --import smoke.psu | grep -q "PAYNE.ICO"
-          ./ps2vmc-tool.exe smoke.vmc --list /BESLES-50325 | grep -q "PAYNE.ICO"
-
-          # the same for the .xps we write ourselves
-          ./ps2vmc-tool.exe samples/ps2card.vmc --xps-export /BESLES-50325 smoke.xps
-          cp samples/ps2card.vmc xps.vmc
-          ./ps2vmc-tool.exe xps.vmc --mc-format
-          ./ps2vmc-tool.exe xps.vmc --import smoke.xps | grep -q "PAYNE.ICO"
-
-          # every third-party container, each onto its own blank card so the
-          # ones holding the same save cannot collide
-          for c in samples/*.cbs samples/*.max samples/*.xps; do
-            cp samples/ps2card.vmc one.vmc
-            ./ps2vmc-tool.exe one.vmc --mc-format
-            ./ps2vmc-tool.exe one.vmc --import "$c" | grep -q "Adding"
-            echo "  imported $c"
-          done
-
-          # the PS1 tool
-          ./ps1vmc-tool.exe samples/epsxe000.mcr --mc-info | grep -q "Data slots: 15"
-          ./ps1vmc-tool.exe samples/epsxe000.mcr --list | grep -q "SLUS-01251"
-
-          rm -f smoke.vmc smoke.psu smoke.xps xps.vmc one.vmc
-          echo "smoke tests passed"
 
       - name: Get short SHA
         run: echo "sha_name=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV
