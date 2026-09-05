@@ -27,6 +27,7 @@ Available commands:
 	 --mc-create, -new  (write a new empty card to <VMC filepath>)
 	 --list, -ls <mc path>
 	 --icons-png <mc path>
+	 --3d-icons, -3d <mc path>  (software-rendered 3D icons)
 	 --extract-file, -x <mc filepath> <output filepath>
 	 --inject-file, -in <input filepath> <mc filepath>
 	 --make-directory, -mkdir <mc path>
@@ -88,16 +89,17 @@ programs are independent and link only what they use — the PS1 tool contains
 no PS2 filesystem code, and the PS2 tool contains no PS1 card code — sharing
 only `util.c`, `aes.c` and the signing files.
 
-The one external dependency is **zlib**, and only the PS2 tool needs it: a
-CodeBreaker `.cbs` body is a deflate stream, read on import and written on
-export. It comes with the SDK on macOS, with `zlib1g-dev` on Debian and Ubuntu,
-and as `mingw-w64-<arch>-zlib` under MSYS2. The Windows binaries are not built
-under MSYS2 though: both are cross-compiled on Linux with mingw-w64, where
-`libz-mingw-w64-dev` covers the 32- and 64-bit targets alike. To force the
-static archive, as those builds do so the released `.exe` needs no `zlib1.dll`:
+The one external dependency is **zlib**. Both tools use it to write their PNGs,
+and the PS2 tool also needs it for CodeBreaker `.cbs` bodies, which are deflate
+streams read on import and written on export. It comes with the SDK on macOS,
+with `zlib1g-dev` on Debian and Ubuntu, and as `mingw-w64-<arch>-zlib` under
+MSYS2. The Windows binaries are not built under MSYS2 though: both are
+cross-compiled on Linux with mingw-w64, where `libz-mingw-w64-dev` covers the
+32- and 64-bit targets alike. To force the static archive, as those builds do so
+the released `.exe` needs no `zlib1.dll`:
 
 ```
-make PS2_LIBS=-l:libz.a
+make ZLIB=-l:libz.a
 ```
 
 ### Save signing

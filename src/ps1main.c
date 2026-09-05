@@ -26,7 +26,7 @@
 
 #include "ps1card.h"
 #include "util.h"
-#include "svpng.h"
+#include "ps2png.h"
 
 #define PROGRAM_NAME    "PS1VMC-TOOL"
 #define PROGRAM_VER     "1.1.0"
@@ -104,7 +104,7 @@ static int cmd_icons(const char* slot)
 		printf("Exporting '%s' icon %d: %s ...\n", mcdata[id].saveName, i, filename);
 
 		FILE* fp = fopen(filename, "wb");
-		svpng(fp, 16, 16, icon, 1);
+		png_write_rgba(fp, icon, 16, 16);
 		fclose(fp);
 		free(icon);
 	}

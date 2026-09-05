@@ -20,20 +20,21 @@ CC	=	gcc
 # derivation needs it.
 CFLAGS	=	-g -O3 -W -I./include -I. -D_GNU_SOURCE -DECB=1
 
-# Only the PS2 tool needs zlib: .cbs bodies are deflate-compressed, both ways.
-# Override to force the static archive, as the Windows builds do:
-#     make PS2_LIBS=-l:libz.a
-PS2_LIBS ?=	-lz
+# zlib: .cbs bodies are deflate-compressed both ways, and both tools write
+# their PNGs through it. Override to force the static archive, as the Windows
+# builds do so the released .exe needs no zlib1.dll:
+#     make ZLIB=-l:libz.a
+ZLIB ?=	-lz
 
 # Shared: byte helpers, AES, and the PSV/VMP signature (HMAC-SHA1 over SHA-1)
-COMMON_SRC =	src/util.c src/aes.c src/sha1.c src/hmac.c src/psv_resign.c
+COMMON_SRC =	src/util.c src/aes.c src/sha1.c src/hmac.c src/psv_resign.c src/ps2png.c
 
 # PS1 only: the card format, plus SHA-256 for .mcx images
 PS1_SRC	=	src/ps1main.c src/ps1card.c src/sha256.c $(COMMON_SRC)
 
 # PS2 only: the mcio filesystem, the 3D icon decoder, and the readers for
-# third-party save containers (LZARI for .max; .cbs uses zlib, see PS2_LIBS)
-PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c src/ps2save.c src/ps2blank.c \
+# third-party save containers (LZARI for .max; .cbs uses zlib, see ZLIB)
+PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c src/ps2render.c src/ps2save.c src/ps2blank.c \
 		src/lzari.c $(COMMON_SRC)
 
 PS1_OBJ	=	$(PS1_SRC:.c=.o)
@@ -47,10 +48,10 @@ ps1: $(PS1TOOL)
 ps2: $(PS2TOOL)
 
 $(PS1TOOL): $(PS1_OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(ZLIB)
 
 $(PS2TOOL): $(PS2_OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(PS2_LIBS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(ZLIB)
 
 # -MMD -MP records which headers each object used, so editing a header
 # rebuilds whatever depends on it instead of leaving a stale object behind.

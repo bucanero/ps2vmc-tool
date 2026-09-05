@@ -48,7 +48,7 @@ jobs:
       # static archive over the import library, so the .exe needs no zlib1.dll.
       - name: Build binaries
         run: |
-          make CC=${{ matrix.tc }}-gcc EXE=.exe PS2_LIBS=-l:libz.a
+          make CC=${{ matrix.tc }}-gcc EXE=.exe ZLIB=-l:libz.a
 
       # The architecture is asserted, not just printed: the MSYS2 leg used to
       # produce x86-64 binaries under a 32-bit name and nothing noticed.

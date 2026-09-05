@@ -21,6 +21,31 @@ const PS2VMC = require(path.join(__dirname, "..", "ps2vmc.js"));
 const PS2Icon = require(path.join(__dirname, "..", "ps2icon.js"));
 const PS2Icon3D = require(path.join(__dirname, "..", "icon3d.js"));
 
+/*
+ * Average an RGBA image into N x N blocks of coverage-weighted colour, so a
+ * render can be compared against a reference without depending on the exact
+ * pixels. Weighting by alpha keeps transparent margins from darkening a block.
+ */
+function fingerprint(px, w, h, N) {
+  const out = Buffer.alloc(N * N * 4);
+  for (let by = 0; by < N; by++)
+    for (let bx = 0; bx < N; bx++) {
+      const x0 = Math.floor(bx * w / N), x1 = Math.floor((bx + 1) * w / N);
+      const y0 = Math.floor(by * h / N), y1 = Math.floor((by + 1) * h / N);
+      let acc = [0, 0, 0], a = 0, cnt = 0;
+      for (let y = y0; y < y1; y++)
+        for (let x = x0; x < x1; x++) {
+          const i = (y * w + x) * 4;
+          for (let k = 0; k < 3; k++) acc[k] += px[i + k] * px[i + 3];
+          a += px[i + 3]; cnt++;
+        }
+      const o = (by * N + bx) * 4;
+      for (let k = 0; k < 3; k++) out[o + k] = a ? Math.round(acc[k] / a) : 0;
+      out[o + 3] = cnt ? Math.round(a / cnt) : 0;
+    }
+  return out.toString("hex");
+}
+
 let pass = 0, fail = 0;
 function ok(name, cond, detail) {
   if (cond) { pass++; console.log("  ✓ " + name); }
@@ -41,11 +66,35 @@ function pngPixels(file) {
   }
   const raw = zlib.inflateSync(idat);
   const out = Buffer.alloc(w * h * 4);
-  const stride = w * 4;
+  const stride = w * 4, BPP = 4;
+
+  /* All five filters: src/ps2png.c picks whichever compresses best per row. */
   for (let y = 0, pos = 0; y < h; y++) {
-    if (raw[pos] !== 0) throw new Error("unexpected PNG filter " + raw[pos]);
-    pos++;
-    raw.copy(out, y * stride, pos, pos + stride);
+    const type = raw[pos++];
+    const row = out.subarray(y * stride, (y + 1) * stride);
+    const up = y ? out.subarray((y - 1) * stride, y * stride) : null;
+
+    for (let x = 0; x < stride; x++) {
+      const v = raw[pos + x];
+      const a = x >= BPP ? row[x - BPP] : 0;
+      const b = up ? up[x] : 0;
+      const c = (up && x >= BPP) ? up[x - BPP] : 0;
+      let add;
+      switch (type) {
+        case 0: add = 0; break;
+        case 1: add = a; break;
+        case 2: add = b; break;
+        case 3: add = (a + b) >> 1; break;
+        case 4: {
+          const pp = a + b - c;
+          const pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c);
+          add = (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
+          break;
+        }
+        default: throw new Error("unexpected PNG filter " + type);
+      }
+      row[x] = (v + add) & 0xff;
+    }
     pos += stride;
   }
   return out;
@@ -177,6 +226,132 @@ async function main() {
        mine.equals(theirs),
        mine.length !== theirs.length ? "length" :
          [...mine].filter((b, i) => b !== theirs[i]).length + " bytes differ");
+  }
+
+  /* ---------- 2b. the software renderer ---------- */
+  console.log("\n=== software render vs --3d-icons ===");
+
+  /*
+   * The CLI rasterises the same model the WebGL viewer draws (src/ps2render.c
+   * mirrors icon3d.js). A browser is needed to compare the two pixel for pixel,
+   * so what is checked here is that every save renders something plausible:
+   * a transparent background, a solid model covering a sensible share of the
+   * frame, and more than one colour in it.
+   *
+   * Measured against the WebGL renderer at the time this was written, over
+   * every save on ps2card.vmc: mean channel difference 0.14-0.37 out of 255,
+   * with the pixels that differ by more than 32 all sitting in high-contrast
+   * areas of the texture and none in smooth ones.
+   */
+  {
+    /* Every save on the 8 MB card, plus icons from the 16 MB one that carry
+     * several animation shapes - those are what make a wrong still frame
+     * visible, since every icon on ps2card.vmc has exactly one shape. */
+    const targets = [];
+    const mainCard = path.join(ROOT, "samples/ps2card.vmc");
+    vmc.openCard(new Uint8Array(fs.readFileSync(mainCard)));
+    for (const e of vmc.list("/"))
+      if (e.isDir && e.name !== "." && e.name !== "..") targets.push([mainCard, e.name]);
+
+    const animCard = path.join(ROOT, "samples/card16mb.bin");
+    if (fs.existsSync(animCard))
+      for (const d of ["BESCES-50000RRV", "BESLES-50703Maximo", "BESLES-51759Maximo2"])
+        targets.push([animCard, d]);
+
+    let rendered = 0, opaqueOk = 0, clearOk = 0;
+    const problems = [], fingerprints = {};
+
+    for (const [cardPath, dir] of targets) {
+      const before = new Set(fs.readdirSync(tmp));
+      try {
+        execFileSync(CLI, [cardPath, "--3d-icons", "/" + dir], { cwd: tmp, encoding: "utf8" });
+      } catch (e) {
+        problems.push(dir + ": CLI failed");
+        continue;
+      }
+      const made = fs.readdirSync(tmp).filter(f => !before.has(f) && f.endsWith("_3d.png"));
+      if (!made.length) { problems.push(dir + ": no PNG"); continue; }
+      rendered++;
+
+      const px = pngPixels(path.join(tmp, made[0]));
+      const n = px.length / 4;
+      const side = Math.round(Math.sqrt(n));
+
+      /* corners must be fully transparent: the model is centred and scaled
+       * into a unit sphere, so it cannot reach them */
+      const corner = [0, side - 1, (side - 1) * side, n - 1];
+      if (corner.every(i => px[i * 4 + 3] === 0)) clearOk++;
+      else problems.push(dir + ": corners are not transparent");
+
+      let opaque = 0;
+      for (let i = 0; i < n; i++)
+        if (px[i * 4 + 3] === 255) opaque++;
+
+      /* a real icon covers a meaningful part of the frame without filling it */
+      if (opaque > n * 0.02 && opaque < n * 0.95) opaqueOk++;
+      else problems.push(dir + ": " + (100 * opaque / n).toFixed(1) + "% opaque");
+
+      fingerprints[dir] = fingerprint(px, side, side, 8);
+    }
+
+    ok("every save renders (" + rendered + " of " + targets.length + ")",
+       targets.length > 0 && rendered === targets.length, problems.slice(0, 3).join(" | "));
+    ok("the background is transparent (" + clearOk + ")",
+       clearOk === rendered, problems.slice(0, 3).join(" | "));
+    ok("the model covers a plausible part of the frame (" + opaqueOk + ")",
+       opaqueOk === rendered, problems.slice(0, 3).join(" | "));
+
+    /*
+     * Those three only say something was drawn. What actually pins the picture
+     * down is a reference: each render is averaged into 8x8 blocks of
+     * coverage-weighted colour and compared against the fingerprint below,
+     * taken from a build checked against the WebGL renderer.
+     *
+     * Blocks, not pixels, so that float differences between compilers and
+     * architectures wash out while anything structural - lighting dropped, the
+     * depth test broken, the texture ignored, the wrong animation frame - moves
+     * the averages well past the tolerance.
+     */
+    const REFERENCE = {
+      "APOLLO-99PS2": "000000000000000000000000000000000000000000000000000000000000000000000000029c640f04a76d1405aa75140ca9731406a66b1405a66d0f0000000000000000019562c51a9e73ff4ba589ff56a58aff1b9e71ff0b9a69c50000000000000000078d62c53b977aff549b83ff4e9b81ff3d9779ff0b8b60c5000000000000000008805ac5458b74ff599380ff5c9683ff3e8b71ff097c54c50000000000000000096846c5136a4cff408069ff44816cff1b7152ff046a46c50000000000000000065c3b0f06613e140c5d3f14095d3e1406623f14065d3b0f000000000000000000000000000000000000000000000000000000000000000000000000",
+      "BASLUS-20963FF1200": "0000000000000000000000000000000000000000000000000000000000000000000000000000000f010507140000011408060514403825140202010f0000000000000000000000c509252bff10202bff2d2b38ff8e794eff020302c50000000000000000000000c5112f36ff284a62ff565272ff8e7055ff010101c50000000000000000222320c5383a38ff3a4752ff616a71ff78645aff2a2b28c50000000000000000141414c5252a2cff24323bff43656fff686b68ff191918c500000000000000000000000f0000001400000014070b0d14283638140000000f000000000000000000000000000000000000000000000000000000000000000000000000",
+      "BESLES-53900-SYS.00": "000000000000000000000000000000000000000000000000000000000000000000000000000000009c9cba11c4c4ddb6e7e7fa6a0000000000000000000000000000000000000000aca6d342beb4bcffc3bdcbcd0000000000000000000000000000000000000000dec7e901c5afa6b3d7c8aad5000000000000000000000000000000000000000000000000b1b1dc9fe0e0fbfbd6d6e30f0000000000000000000000000000000089899e04b4b4d6e1e4e4fcfce7e7f756000000000000000000000000000000000101012e1c1c20ac080809953030332e00000000000000000000000000000000000000010000001900000017000000000000000000000000",
+      "BESLES-52159c714f754": "0000000000000000000000000000000000000000000000000000000000000000000000000038502c0038506a0f394a6a0138506a0038506a00384f2c000000000000000000344b6a00344bff272e32ff242d33ff053449ff00334b6a0000000000000000032f436a272f2cff372a1cff2f281aff1d2b2bff002d436a0000000000000000102b366a1f2221ff332a24ff251e14ff1d231cff0628386a0000000000000000001e306a0c212cff261314ff261412ff0e2223ff07212e6a0000000000000000001a2b2c001a2b6a11242e6a0d222d6a00192b6a001a2b2c000000000000000000000000000000000000000000000000000000000000000000000000",
+      "APOLLO-99999": "000000000000000000000000000000000000000000000000000000000000000000000000029c640f04a76d1405aa75140ca9731406a66b1405a66d0f0000000000000000019562c51a9e73ff4ba589ff56a58aff1b9e71ff0b9a69c50000000000000000078d62c53b977aff549b83ff4e9b81ff3d9779ff0b8b60c5000000000000000008805ac5458b74ff599380ff5c9683ff3e8b71ff097c54c50000000000000000096846c5136a4cff408069ff44816cff1b7152ff046a46c50000000000000000065c3b0f06613e140c5d3f14095d3e1406623f14065d3b0f000000000000000000000000000000000000000000000000000000000000000000000000",
+      "BESLES-50325": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000026190d1b000000000000000000000000000000000000000000000000352e2550443d2dc3131412674b413338000000000000000000000000000000003d2e28542b2b1ffd20241b3a00000000000000000000000000000000000000001d1c1d29161814c2292c2055000000000000000000000000000000000000000014161648070909801517192b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "BESCES-50000RRV": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007f54510d9456533a813b370d0000000000000000000000000000000074322e9e6b2e2ae2814542ffa2524fde5c1d196c9226202e00000000000000004e3d3cca574343fbc0544ee6c46460e54c4242fe6d2a26c300000000000000000807073c0b0a0a59000000540000005415131359030303350000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "BESLES-50703Maximo": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000003b251e374b311e0800000000000000000000000000000000000000004343431f834e3ac26f4d33609ba1700b00000000000000000000000000000000664a343c63533cf55e5446cf796f592a000000000000000000000000000000005f3a1e335b6a27d24d7d1b555a3825010000000000000000000000000000000000000000475d258344631f6200000000000000000000000000000000000000003c2917064b321643452e18490000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "BESLES-51759Maximo2": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000311e18053e271b020000000000000000000000000000000000000000c3221b0165433a72855d3b9184875d0f00000000000000000000000000000000895f534f5e5351ce5f513fda8f634d4f0000000000000000000000000000000095816f777063624c494a35cac67f581400000000000000000000000000000000818a8272000000005a3f2aae5f36221b00000000000000000000000000000000b7b6b921000000005d3a2e4d5a37365300000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    };
+
+    let matched = 0;
+    const drift = [];
+    for (const dir of Object.keys(REFERENCE)) {
+      const got = fingerprints[dir];
+      if (!got) { drift.push(dir + ": not rendered"); continue; }
+      const a = Buffer.from(REFERENCE[dir], "hex"), b = Buffer.from(got, "hex");
+      if (a.length !== b.length) { drift.push(dir + ": size changed"); continue; }
+      let sum = 0, max = 0;
+      for (let i = 0; i < a.length; i++) {
+        const d = Math.abs(a[i] - b[i]);
+        sum += d; if (d > max) max = d;
+      }
+      const mean = sum / a.length;
+      if (mean <= 4 && max <= 24) matched++;
+      else drift.push(dir + ": mean " + mean.toFixed(1) + ", max " + max);
+    }
+    ok("renders match the reference picture (" + matched + " of " +
+       Object.keys(REFERENCE).length + ")",
+       matched === Object.keys(REFERENCE).length, drift.slice(0, 3).join(" | "));
+
+    /* the same input must give the same bytes twice */
+    const one = path.join(tmp, "det1"), two = path.join(tmp, "det2");
+    fs.mkdirSync(one, { recursive: true }); fs.mkdirSync(two, { recursive: true });
+    execFileSync(CLI, [targets[0][0], "--3d-icons", "/" + targets[0][1]], { cwd: one, encoding: "utf8" });
+    execFileSync(CLI, [targets[0][0], "--3d-icons", "/" + targets[0][1]], { cwd: two, encoding: "utf8" });
+    const f1 = fs.readdirSync(one)[0], f2 = fs.readdirSync(two)[0];
+    ok("rendering is deterministic",
+       f1 === f2 && fs.readFileSync(path.join(one, f1)).equals(fs.readFileSync(path.join(two, f2))));
   }
 
   /* ---------- 3. animation logic ---------- */

@@ -513,6 +513,53 @@ no change to the test. It also exports every save on the sample card as both
 each one back to confirm the files survive the round trip — plus the stronger
 check that rewriting a real `.cbs` reproduces it exactly.
 
+## The CLI draws the same icons
+
+`ps2vmc-tool <card> --3d-icons <save>` writes the icons as PNGs the way this
+page draws them, rather than the flat texture `--icons-png` dumps. There is no
+GL context in a terminal, so `src/ps2render.c` rasterises the model in software:
+same camera, same three-light-plus-ambient shading, same 0x80-centred vertex
+colours, same still frame. The background is left transparent so the PNG
+composites anywhere; the renderer can also paint the `icon.sys` gradient.
+
+PNGs are written by `src/ps2png.c`, which compresses through zlib and picks a
+filter per row with the heuristic the PNG spec suggests. It replaced a vendored
+writer that emitted stored (uncompressed) deflate blocks:
+
+| | before | after |
+| --- | --- | --- |
+| 256x256 icon render | 263,743 | **34,309** |
+| 128x128 flat texture | 65,568 | **19,189** |
+| 16x16 PS1 icon | ~1,090 | **553** |
+
+The pixels are unchanged - `icontest.js` still compares the CLI's texture export
+against the JavaScript decoder byte for byte, and that check reads the PNG back
+through all five filter types.
+
+Because `icon3d.js` already draws these icons, it can be used to check the C.
+Rendering every save on `samples/ps2card.vmc` both ways, at 256x256, and
+comparing the two over black:
+
+| | |
+| --- | --- |
+| mean channel difference | 0.14 - 0.37 out of 255 |
+| silhouette disagreement | 0 - 73 pixels, against 5,000 - 24,000 covered |
+| pixels differing by more than 32 | 0 - 66 |
+| ...of those, in a smooth area | **0** |
+
+Every pixel that differs by more than 32 sits where the texture has sharp local
+detail; in smooth areas the two agree. That is what two independent rasterisers
+disagreeing on sub-pixel sample placement looks like, and it is the reason the
+regression test compares 8x8 block averages rather than pixels - block averages
+survive that noise but not a real change.
+
+The tests in `test/icontest.js` cover it against a stored reference. Breaking
+the Z flip, the Y flip, the still-frame choice, the texture lookup, the
+lighting, the depth test, or the camera distance all move the averages past
+tolerance. Note that the frame check needs an animated icon: every icon on
+`ps2card.vmc` has exactly one shape, so three multi-shape saves from
+`card16mb.bin` are in the reference set as well.
+
 ## Hex editor
 
 *Hex* next to any file in a save opens a byte editor on it. Click a byte, type

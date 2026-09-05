@@ -87,13 +87,17 @@ jobs:
           echo "  imported $c"
         done
 
+        # the 3D icon renderer: a real PNG with a transparent background
+        ./ps2vmc-tool samples/ps2card.vmc --3d-icons /BESLES-50325 | grep -q "rendered"
+        test -s BESLES-50325_PAYNE_3d.png
+
         # the PS1 tool, including a card of its own
         ./ps1vmc-tool samples/epsxe000.mcr --mc-info | grep -q "Data slots: 15"
         ./ps1vmc-tool samples/epsxe000.mcr --list | grep -q "SLUS-01251"
         ./ps1vmc-tool new.mcr --mc-create
         ./ps1vmc-tool new.mcr --mc-info | grep -q "Data slots: 15"
 
-        rm -f smoke.psu smoke.xps smoke.cbs smoke.max new.vmc round.vmc one.vmc fmt.vmc new.mcr
+        rm -f smoke.psu smoke.xps smoke.cbs smoke.max new.vmc round.vmc one.vmc fmt.vmc new.mcr *_3d.png
         echo "smoke tests passed"
 
     - name: Get short SHA
