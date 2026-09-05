@@ -23,8 +23,17 @@ cd "$(dirname "$0")"
 ROOT=..
 OUT=ps2vmc-wasm.js
 
+# -Oz, not -O3: it takes the module from 123 KB to 101 KB (164 KB to 134 KB
+# once base64'd), which helps however the page is delivered. The cost is about
+# 12% on LZARI encoding - a .max export of a whole card goes from ~47 ms to
+# ~52 ms - and nothing measurable on the zlib paths.
+#
+# Compressing the module before the base64 was considered and is not worth it:
+# any server that content-encodes already sends the plain base64 smaller than a
+# pre-compressed copy would be, and doing it ourselves would need an async
+# DecompressionStream step on a page that currently needs none.
 emcc \
-	-O3 \
+	-Oz \
 	-I "$ROOT/include" -I "$ROOT" \
 	"$ROOT/src/mcio.c" \
 	"$ROOT/src/util.c" \

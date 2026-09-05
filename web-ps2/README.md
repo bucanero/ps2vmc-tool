@@ -69,7 +69,7 @@ psv.js            PSV and VMP signing, PSV construction (shared with PS1)
 icon3d.js         WebGL icon renderer, animation logic, grid thumbnails
 hexedit.js        the hex editor modal (shared with the PS1 page)
 ps2vmc-wasm.js         generated: emscripten glue (~13 KB)
-ps2vmc-wasm-binary.js  generated: the compiled module, base64 (~65 KB)
+ps2vmc-wasm-binary.js  generated: the compiled module, base64 (~131 KB)
 src/web_api.c          the C bridge: mcio wrappers, PSU/PSV, image dumps
 build.sh               rebuilds both generated files
 test/                  differential tests against the native CLI
@@ -140,6 +140,32 @@ So `build.sh` compiles to a real `.wasm`, base64-encodes it into
 `Module.wasmBinary` (which needs `-s INCOMING_MODULE_JS_API=wasmBinary`,
 because `-s STRICT=1` otherwise drops it). Nothing is fetched, and every file
 stays ASCII.
+
+### Size: -Oz, and why the base64 is not compressed
+
+The module is built with `-Oz` rather than `-O3`, which takes it from 122,951
+bytes to 100,803 — 164 KB down to 134 KB once base64'd. It costs about 12% on
+LZARI encoding (a `.max` export of every save on the sample card goes from
+~47 ms to ~52 ms) and nothing measurable on the zlib paths, which is a good
+trade for 30 KB on every page load.
+
+Compressing the module before base64-encoding it, and inflating it in the
+loader, looks appealing and is not worth doing. Base64 inflates by 4/3, but
+HTTP content-encoding undoes almost all of that:
+
+| | on disk | gzip server sends | brotli server sends |
+| --- | --- | --- | --- |
+| plain base64 (what ships) | 164,201 | **70,903** | **59,622** |
+| base64 of a gzipped module | 72,208 | ~72,208 | ~72,208 |
+| base64 of a brotli'd module | 59,616 | ~59,616 | ~59,616 |
+
+Against a gzip server, pre-compressing is 1.3 KB *worse* than doing nothing;
+against brotli it is a six-byte difference. It only pays on `file://` or a
+server that does not compress, and the price is an async
+`DecompressionStream` step before the module can start — on a page that today
+needs none — plus a browser floor it does not otherwise have. Brotli, the one
+option that would actually be smaller, is not available in
+`DecompressionStream` at all, so it would mean shipping a decompressor.
 
 ## Rebuilding the WebAssembly module
 
