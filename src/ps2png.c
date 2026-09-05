@@ -25,6 +25,15 @@
 
 #define BPP  4          /* RGBA8, the only format written here */
 
+/*
+ * An upper bound on the dimensions, so none of the size arithmetic below can
+ * wrap and the filtered stream still fits the uLong zlib takes - that is 32
+ * bits on the 32-bit Windows build. At this limit the stream is under 4 GB:
+ * (16384 * 4 + 1) * 16384 is about 1.07e9. Nothing here asks for more than
+ * 4096, so the bound only exists to make the arithmetic safe by inspection.
+ */
+#define PNG_MAX_DIM  16384
+
 static int put_u32be(FILE *f, uint32_t v)
 {
 	uint8_t b[4] = { (uint8_t)(v >> 24), (uint8_t)(v >> 16),
@@ -84,7 +93,7 @@ int png_write_rgba(FILE *f, const uint8_t *rgba, int w, int h)
 	uLongf complen;
 	int rc = -1, t, best;
 
-	if (!f || !rgba || w <= 0 || h <= 0)
+	if (!f || !rgba || w <= 0 || h <= 0 || w > PNG_MAX_DIM || h > PNG_MAX_DIM)
 		return -1;
 
 	stride = (size_t)w * BPP;

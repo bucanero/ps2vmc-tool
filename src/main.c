@@ -311,7 +311,7 @@ static int cmd_export(const char* path, const char* output)
 	mcio_mcDclose(dd);
 	fclose(fh);
 
-	printf("Save succesfully exported to %s.\n", output);
+	printf("Save successfully exported to %s.\n", output);
 
 	return dd;
 }
@@ -500,7 +500,7 @@ static int cmd_psv_export(const char* path, const char* output)
 	if (!psv_resign(output))
 		return -1005;
 
-	printf("Save succesfully exported to %s.\n", output);
+	printf("Save successfully exported to %s.\n", output);
 
 	return 0;
 }
@@ -550,11 +550,16 @@ static int cmd_export_icons_png(const char* path)
 			return -1003;
 		}
 
-		png_write_rgba(fh, output, 128, 128);
+		r = png_write_rgba(fh, output, 128, 128);
 		fclose(fh);
 		free(output);
 
-		printf("Icon succesfully exported to %s\n", filePath);
+		if (r < 0) {
+			fprintf(stderr, "Error: can't write '%s'\n", filePath);
+			return -1003;
+		}
+
+		printf("Icon successfully exported to %s\n", filePath);
 	}
 
 	return 0;
@@ -623,11 +628,16 @@ static int cmd_render_icons(const char* path)
 			return -1003;
 		}
 
-		png_write_rgba(fh, pixels, RENDER_SIZE, RENDER_SIZE);
+		r = png_write_rgba(fh, pixels, RENDER_SIZE, RENDER_SIZE);
 		fclose(fh);
 		free(pixels);
 
-		printf("Icon succesfully rendered to %s\n", filePath);
+		if (r < 0) {
+			fprintf(stderr, "Error: can't write '%s'\n", filePath);
+			return -1003;
+		}
+
+		printf("Icon successfully rendered to %s\n", filePath);
 	}
 
 	return 0;
@@ -644,7 +654,7 @@ static int cmd_mcformat(void)
 	if (r < 0)
 		return r;
 
-	printf("Memory card succesfully formated.\n");
+	printf("Memory card successfully formatted.\n");
 
 	return 0;
 }
@@ -1318,7 +1328,7 @@ int main(int argc, char **argv)
 
 	r = mcio_init(data, dsize);
 	/*if (r == sceMcResNoFormat)
-		fprintf(stderr, "Error: memory card not formated...\n");*/
+		fprintf(stderr, "Error: memory card not formatted...\n");*/
 	if ((r != sceMcResNoFormat) && (r < 0)) {
 		fprintf(stderr, "Error: no PS2 Memory Card detected... (%d)\n", r);
 	}

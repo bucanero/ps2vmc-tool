@@ -177,8 +177,6 @@ int ps2icon_parse(const uint8_t* iData, size_t len, ps2icon_t *out)
 
 		for (i = 0; i < ICON_TEXELS; i++, offset += 2)
 			*lRGBA++ = TIM2RGBA(&iData[offset]);
-
-		out->has_texture = 1;
 	}
 	else
 	{	//Compressed texture
@@ -222,7 +220,11 @@ int ps2icon_parse(const uint8_t* iData, size_t len, ps2icon_t *out)
 		}
 	}
 
-	out->has_texture = 1;
+	/* Only a full 128x128 counts. A truncated RLE stream leaves the tail of
+	 * the buffer zeroed, and handing that to the renderer as a texture draws
+	 * the model black; the JavaScript parser reports the same case as
+	 * textureless so the model falls back to its vertex colours. */
+	out->has_texture = (lRGBA - lTexturePtr) == ICON_TEXELS;
 
 	return ok;
 }

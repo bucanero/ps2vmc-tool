@@ -354,6 +354,52 @@ async function main() {
        f1 === f2 && fs.readFileSync(path.join(one, f1)).equals(fs.readFileSync(path.join(two, f2))));
   }
 
+  /* ---------- 2c. a truncated texture is not a texture ---------- */
+  console.log("\n=== a truncated RLE texture falls back to vertex colours ===");
+  {
+    /*
+     * parseTexture() reports a short RLE decode as textureless, so the model
+     * is drawn from its vertex colours instead of a half-decoded, part-zeroed
+     * image. src/ps2icon.c has to agree, or the CLI renders those icons dark.
+     *
+     * Two different cuts, both textureless, must therefore render identically
+     * - the geometry is the same and neither has a usable texture. With the C
+     * flag set unconditionally the deeper cut samples more zeros and comes out
+     * darker, so the two diverge.
+     */
+    const card = path.join(ROOT, "samples/card16mb.bin");
+    const dir = "BESCES-50361AYBABTU!";
+
+    if (fs.existsSync(card)) {
+      vmc.openCard(new Uint8Array(fs.readFileSync(card)));
+      const sys = PS2Icon.parseIconSys(vmc.readFile("/" + dir + "/icon.sys"));
+      const whole = vmc.readFile("/" + dir + "/" + sys.iconName);
+
+      const cuts = [2000, 4000].map(n => whole.subarray(0, whole.length - n));
+      const textureless = cuts.every(c => PS2Icon.parseIco(c).texture === null);
+      ok("both cuts are textureless to the JavaScript parser", textureless);
+
+      const renders = cuts.map((cut, i) => {
+        const work = path.join(tmp, "cut" + i);
+        fs.mkdirSync(work, { recursive: true });
+        const cardCopy = path.join(work, "c.bin");
+        fs.copyFileSync(card, cardCopy);
+        const icoPath = path.join(work, "cut.ico");
+        fs.writeFileSync(icoPath, Buffer.from(cut));
+        execFileSync(CLI, [cardCopy, "--inject-file", icoPath,
+                           "/" + dir + "/" + sys.iconName], { encoding: "utf8" });
+        execFileSync(CLI, [cardCopy, "--3d-icons", "/" + dir],
+                     { cwd: work, encoding: "utf8" });
+        const png = fs.readdirSync(work).find(f => f.endsWith("_3d.png"));
+        return fingerprint(pngPixels(path.join(work, png)), 256, 256, 8);
+      });
+
+      ok("both truncations render the same textureless model",
+         renders[0] === renders[1],
+         "the two cuts produced different images");
+    }
+  }
+
   /* ---------- 3. animation logic ---------- */
   console.log("\n=== animation plan / morph ===");
   const anims = catalogue.filter(c => c.ico.shapeCount > 1);
