@@ -854,6 +854,73 @@ int saveSingleSave(const char* fileName, int slotNumber, int singleSaveType)
 }
 
 //Import single save to the Memory Card
+//Case-insensitive suffix test, without depending on strcasecmp
+static bool ends_with_ci(const char* s, const char* suffix)
+{
+    size_t sl = strlen(s), fl = strlen(suffix);
+
+    if (sl <= fl)
+        return false;
+
+    for (size_t i = 0; i < fl; i++)
+        if (tolower((unsigned char) s[sl - fl + i]) != tolower((unsigned char) suffix[i]))
+            return false;
+
+    return true;
+}
+
+//Path separators to split a file name on. Windows accepts both, so a Windows
+//build has to honour either - the bug report's own command line used '/'.
+//Everywhere else '\\' is a legal character in a file name, and treating it as
+//a separator would cut a real name short.
+#ifdef _WIN32
+#define PATH_SEPARATORS     "/\\"
+#else
+#define PATH_SEPARATORS     "/"
+#endif
+
+//A raw single save carries no header, so the file name is the only place its
+//name can come from - and that name is the directory frame's region, product
+//code and identifier, not decoration. Two things have to be stripped off it:
+//
+//  - the directory. Only looking for '/' left Windows paths untouched, so the
+//    whole path went into the name field and the product code came out of the
+//    directory name.
+//  - a ".raw"/".ps1" extension an extractor may have added. Only those two:
+//    a PS1 identifier may legitimately contain a dot, so any other name is
+//    taken as it stands.
+static void get_save_name_from_path(const char* path, char* out, size_t outsz)
+{
+    static const char* ext[] = { ".raw", ".ps1" };
+    const char* name = path;
+    const char* p;
+    size_t len;
+
+    for (p = path; *p; p++)
+        if (strchr(PATH_SEPARATORS, *p))
+            name = p + 1;
+
+    //The extension is matched against the whole base name, before any
+    //truncation. Cutting to the header field first leaves a fragment behind
+    //when the name is long: "ABCDEFGHIJKLMNOPQR.raw" would keep a ".r".
+    len = strlen(name);
+
+    for (size_t i = 0; i < sizeof(ext) / sizeof(ext[0]); i++)
+    {
+        if (ends_with_ci(name, ext[i]))
+        {
+            len -= strlen(ext[i]);
+            break;
+        }
+    }
+
+    if (len > outsz - 1)
+        len = outsz - 1;
+
+    memcpy(out, name, len);
+    out[len] = 0;
+}
+
 int openSingleSave(const char* fileName, int* requiredSlots)
 {
     uint8_t* inputData;
@@ -887,12 +954,12 @@ int openSingleSave(const char* fileName, int* requiredSlots)
         finalData_Length = inputData_Length + PS1CARD_HEADER_SIZE;
         finalData = calloc(1, finalData_Length);
 
-        const char* singleSaveName = strrchr(fileName, '/');
-        singleSaveName = singleSaveName ? singleSaveName + 1 : fileName;
+        char saveName[21];
+        get_save_name_from_path(fileName, saveName, sizeof(saveName));
 
         //Recreate save header
         finalData[0] = 0x51;        //Q
-        strncpy((char*) &finalData[10], singleSaveName, 20);
+        strncpy((char*) &finalData[10], saveName, 20);
 
         //Copy save data
         memcpy(&finalData[PS1CARD_HEADER_SIZE], inputData, inputData_Length);

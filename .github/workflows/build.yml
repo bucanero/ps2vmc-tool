@@ -97,6 +97,162 @@ jobs:
         ./ps1vmc-tool new.mcr --mc-create
         ./ps1vmc-tool new.mcr --mc-info | grep -q "Data slots: 15"
 
+        # A raw save has no header, so its name comes from the file name - and
+        # that name is the region, product code and identifier, so a directory
+        # must not leak into it.
+        ./ps1vmc-tool samples/epsxe000.mcr --extract-save 0 BASLUS-0125100000-00
+        mkdir -p ps1sub
+        cp BASLUS-0125100000-00 ps1sub/
+        cp BASLUS-0125100000-00 BASLUS-0125100000-00.raw
+        for f in "BASLUS-0125100000-00" "ps1sub/BASLUS-0125100000-00" \
+                 "BASLUS-0125100000-00.raw"; do
+          ./ps1vmc-tool imp.mcr --mc-create >/dev/null
+          ./ps1vmc-tool imp.mcr --inject-save "$f" >/dev/null
+          # The product code column specifically: grepping the whole line
+          # would also match the file name, which contains "SLUS-01251" even
+          # when a directory has leaked into it.
+          code=$(./ps1vmc-tool imp.mcr --list |
+                 awk -F'|' '$1 ~ /^ *[0-9]+ *$/ { gsub(/ /, "", $5); print $5; exit }')
+          if [ "$code" != "SLUS-01251" ]; then
+            echo "::error::importing '$f' gave product code '$code'"
+            ./ps1vmc-tool imp.mcr --list; exit 1
+          fi
+        done
+        echo "  raw import keeps its name across path shapes"
+
+        # These runners are not Windows, and there a backslash is an ordinary
+        # character in a file name - splitting on it would cut a real name
+        # short. The Windows build honours both separators; that branch is a
+        # #ifdef in src/ps1card.c and cannot be exercised here.
+        cp BASLUS-0125100000-00 'back\slash'
+        ./ps1vmc-tool imp.mcr --mc-create >/dev/null
+        ./ps1vmc-tool imp.mcr --inject-save 'back\slash' >/dev/null
+        ./ps1vmc-tool imp.mcr --list | grep -q 'back\\slash' || {
+          echo "::error::a backslash in a file name was treated as a directory"
+          ./ps1vmc-tool imp.mcr --list; exit 1; }
+        echo "  a backslash in a name is kept, as it must be off Windows"
+
+        # A 20-character name hides a bad extension, because the copy into the
+        # 20-byte name field truncates it anyway. A short one does not.
+        cp BASLUS-0125100000-00 SHORTNAME.raw
+        ./ps1vmc-tool ext.mcr --mc-create >/dev/null
+        ./ps1vmc-tool ext.mcr --inject-save SHORTNAME.raw >/dev/null
+        ./ps1vmc-tool ext.mcr --list | grep -q "SHORTNAME.raw" && {
+          echo "::error::the .raw extension leaked into the save name"
+          ./ps1vmc-tool ext.mcr --list; exit 1; }
+        ./ps1vmc-tool ext.mcr --list | grep -q "SHORTNAME" || {
+          echo "::error::the save name was lost"; exit 1; }
+        echo "  a .raw extension is stripped from the name"
+
+        # Short name, long directory: the length must come from the base name,
+        # not the path, or the copy runs off the end of the string.
+        cp BASLUS-0125100000-00 ps1sub/SHORTNAME.raw
+        ./ps1vmc-tool sub.mcr --mc-create >/dev/null
+        ./ps1vmc-tool sub.mcr --inject-save ps1sub/SHORTNAME.raw >/dev/null
+        name=$(./ps1vmc-tool sub.mcr --list |
+               awk -F'|' '$1 ~ /^ *[0-9]+ *$/ { gsub(/^ +| +$/, "", $2); print $2; exit }')
+        if [ "$name" != "SHORTNAME" ]; then
+          echo "::error::a short name in a long directory came out as '$name'"; exit 1
+        fi
+        echo "  a short name in a long directory survives intact"
+
+        # A deleted save keeps its name and data and must not read as a link.
+        cp samples/epsxe000.mcr del.mcr
+        python3 - <<'PYEOF'
+        d = bytearray(open("del.mcr", "rb").read())
+        d[128] = 0xA1                      # slot 0: initial, deleted
+        x = 0
+        for i in range(128, 255):
+            x ^= d[i]
+        d[255] = x                         # directory frame checksum
+        open("del.mcr", "wb").write(bytes(d))
+        PYEOF
+        ./ps1vmc-tool del.mcr --list | grep -q "<deleted>" || {
+          echo "::error::a deleted save is not reported as deleted"
+          ./ps1vmc-tool del.mcr --list; exit 1; }
+        echo "  deleted saves are reported as deleted"
+
+        # --delete is the console's delete: the block type changes, the name
+        # and data stay, and --undelete puts it back. Round-tripping a card
+        # through both has to leave it byte for byte as it started.
+        cp samples/epsxe000.mcr soft.mcr
+        ./ps1vmc-tool soft.mcr --delete 0 >/dev/null
+        ./ps1vmc-tool soft.mcr --list | grep -q "<deleted>" || {
+          echo "::error::--delete did not soft-delete the save"
+          ./ps1vmc-tool soft.mcr --list; exit 1; }
+        ./ps1vmc-tool soft.mcr --list | grep -q "SLUS-01251" || {
+          echo "::error::--delete lost the save name"; exit 1; }
+        ./ps1vmc-tool soft.mcr --undelete 0 >/dev/null
+        cmp -s soft.mcr samples/epsxe000.mcr || {
+          echo "::error::delete then undelete did not restore the card"; exit 1; }
+        echo "  --delete/--undelete round-trips the card exactly"
+
+        # And it must refuse the states that make no sense. These exit non-zero
+        # by design, so the output is captured rather than piped - pipefail
+        # would otherwise fail the pipeline before grep ever saw the message.
+        out=$(./ps1vmc-tool soft.mcr --undelete 0 2>&1 || true)
+        case "$out" in
+          *"not deleted"*) ;;
+          *) echo "::error::--undelete accepted a save that is not deleted: $out"; exit 1;;
+        esac
+        out=$(./ps1vmc-tool soft.mcr --delete 99 2>&1 || true)
+        case "$out" in
+          *"out of range"*) ;;
+          *) echo "::error::--delete accepted an out-of-range slot: $out"; exit 1;;
+        esac
+        echo "  --delete/--undelete reject impossible states"
+
+        # A slot number has to be a number, and in range. strtol() alone reads
+        # "abc" as 0 - a real slot - and nothing bounded the result, so a large
+        # one indexed well past the end of the slot array.
+        cp samples/epsxe000.mcr slot.mcr
+        for bad in abc 99 -1 1x 2abc; do
+          out=$(./ps1vmc-tool slot.mcr --delete "$bad" 2>&1 || true)
+          case "$out" in
+            *"not a slot number"*|*"out of range"*) ;;
+            *) echo "::error::--delete accepted '$bad': $out"; exit 1;;
+          esac
+          out=$(./ps1vmc-tool slot.mcr --remove "$bad" 2>&1 || true)
+          case "$out" in
+            *"not a slot number"*|*"out of range"*) ;;
+            *) echo "::error::--remove accepted '$bad': $out"; exit 1;;
+          esac
+        done
+        cmp -s slot.mcr samples/epsxe000.mcr || {
+          echo "::error::a rejected slot argument still changed the card"; exit 1; }
+        echo "  slot arguments are validated, and the card is untouched"
+
+        # The extension is stripped from the whole base name. Truncating to the
+        # 20-byte header field first would leave a fragment like ".r" behind.
+        ./ps1vmc-tool samples/epsxe000.mcr --extract-save 0 ABCDEFGHIJKLMNOPQR.raw
+        ./ps1vmc-tool frag.mcr --mc-create >/dev/null
+        ./ps1vmc-tool frag.mcr --inject-save ABCDEFGHIJKLMNOPQR.raw >/dev/null
+        name=$(./ps1vmc-tool frag.mcr --list |
+               awk -F'|' '$1 ~ /^ *[0-9]+ *$/ { gsub(/^ +| +$/, "", $2); print $2; exit }')
+        if [ "$name" != "ABCDEFGHIJKLMNOPQR" ]; then
+          echo "::error::a long name kept an extension fragment: '$name'"; exit 1
+        fi
+        echo "  a long name loses its whole extension, not part of it"
+
+        # A name longer than the 20-byte field is cut to fit. (The clamp that
+        # does it also stops a memcpy past the end of the local buffer, which
+        # only a sanitizer build can observe - the visible name is the same
+        # either way.)
+        ./ps1vmc-tool samples/epsxe000.mcr --extract-save 0 ABCDEFGHIJKLMNOPQRSTUVWXYZ
+        ./ps1vmc-tool long.mcr --mc-create >/dev/null
+        ./ps1vmc-tool long.mcr --inject-save ABCDEFGHIJKLMNOPQRSTUVWXYZ >/dev/null
+        name=$(./ps1vmc-tool long.mcr --list |
+               awk -F'|' '$1 ~ /^ *[0-9]+ *$/ { gsub(/^ +| +$/, "", $2); print $2; exit }')
+        if [ "$name" != "ABCDEFGHIJKLMNOPQRST" ]; then
+          echo "::error::a 26-character name was not cut to 20: '$name'"; exit 1
+        fi
+        echo "  a name longer than the header field is cut to fit"
+
+        rm -rf ps1sub 'C:\saves\BASLUS-0125100000-00' BASLUS-0125100000-00 \
+               BASLUS-0125100000-00.raw SHORTNAME.raw 'back\slash' \
+               imp.mcr ext.mcr del.mcr soft.mcr slot.mcr frag.mcr \
+               ABCDEFGHIJKLMNOPQR.raw ABCDEFGHIJKLMNOPQRSTUVWXYZ long.mcr sub.mcr
+
         rm -f smoke.psu smoke.xps smoke.cbs smoke.max new.vmc round.vmc one.vmc fmt.vmc new.mcr *_3d.png
         echo "smoke tests passed"
 

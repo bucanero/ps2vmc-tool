@@ -65,6 +65,8 @@ Available commands:
 	 --mc-create, -new  (write a new empty card to <MC filepath>)
 	 --list, -ls
 	 --remove, -rm <slot #>
+	 --delete, -del <slot #>  (recoverable, as the console does)
+	 --undelete, -undel <slot #>
 	 --icons <slot #>
 	 --raw-image, -raw <output filepath>
 	 --gme-image, -gme <output filepath>
@@ -77,6 +79,22 @@ Available commands:
 	 --mcs-export, -mcs <slot #> <MCS output filepath>
 	 --psv-export, -psv <slot #>
 ```
+
+### Extracting PS1 saves: prefer .MCS
+
+`--mcs-export` is the one to use. An `.mcs` is the save's 128-byte directory
+frame followed by its data, so the name, product code, region and identifier
+travel *with* the file. `.psv` and the Action Replay format carry their headers
+too.
+
+`--extract-save` writes the data blocks and nothing else. A raw save has no
+header, so importing one has to rebuild it, and the only thing left to rebuild
+it from is the file name — the importer copies 20 characters of the name into
+the directory frame, which is exactly the region, product code and identifier.
+That works while the file still carries the 20-character name it was extracted
+under, and stops working the moment anyone renames it.
+
+So raw is only for the cases that need bare blocks, not for keeping saves.
 
 ## Building the source code
 
