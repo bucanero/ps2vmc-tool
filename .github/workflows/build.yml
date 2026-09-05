@@ -140,6 +140,18 @@ jobs:
           echo "::error::the save name was lost"; exit 1; }
         echo "  a .raw extension is stripped from the name"
 
+        # Short name, long directory: the length must come from the base name,
+        # not the path, or the copy runs off the end of the string.
+        cp BASLUS-0125100000-00 ps1sub/SHORTNAME.raw
+        ./ps1vmc-tool sub.mcr --mc-create >/dev/null
+        ./ps1vmc-tool sub.mcr --inject-save ps1sub/SHORTNAME.raw >/dev/null
+        name=$(./ps1vmc-tool sub.mcr --list |
+               awk -F'|' '$1 ~ /^ *[0-9]+ *$/ { gsub(/^ +| +$/, "", $2); print $2; exit }')
+        if [ "$name" != "SHORTNAME" ]; then
+          echo "::error::a short name in a long directory came out as '$name'"; exit 1
+        fi
+        echo "  a short name in a long directory survives intact"
+
         # A deleted save keeps its name and data and must not read as a link.
         cp samples/epsxe000.mcr del.mcr
         python3 - <<'PYEOF'
@@ -186,9 +198,56 @@ jobs:
         esac
         echo "  --delete/--undelete reject impossible states"
 
+        # A slot number has to be a number, and in range. strtol() alone reads
+        # "abc" as 0 - a real slot - and nothing bounded the result, so a large
+        # one indexed well past the end of the slot array.
+        cp samples/epsxe000.mcr slot.mcr
+        for bad in abc 99 -1 1x 2abc; do
+          out=$(./ps1vmc-tool slot.mcr --delete "$bad" 2>&1 || true)
+          case "$out" in
+            *"not a slot number"*|*"out of range"*) ;;
+            *) echo "::error::--delete accepted '$bad': $out"; exit 1;;
+          esac
+          out=$(./ps1vmc-tool slot.mcr --remove "$bad" 2>&1 || true)
+          case "$out" in
+            *"not a slot number"*|*"out of range"*) ;;
+            *) echo "::error::--remove accepted '$bad': $out"; exit 1;;
+          esac
+        done
+        cmp -s slot.mcr samples/epsxe000.mcr || {
+          echo "::error::a rejected slot argument still changed the card"; exit 1; }
+        echo "  slot arguments are validated, and the card is untouched"
+
+        # The extension is stripped from the whole base name. Truncating to the
+        # 20-byte header field first would leave a fragment like ".r" behind.
+        ./ps1vmc-tool samples/epsxe000.mcr --extract-save 0 ABCDEFGHIJKLMNOPQR.raw
+        ./ps1vmc-tool frag.mcr --mc-create >/dev/null
+        ./ps1vmc-tool frag.mcr --inject-save ABCDEFGHIJKLMNOPQR.raw >/dev/null
+        name=$(./ps1vmc-tool frag.mcr --list |
+               awk -F'|' '$1 ~ /^ *[0-9]+ *$/ { gsub(/^ +| +$/, "", $2); print $2; exit }')
+        if [ "$name" != "ABCDEFGHIJKLMNOPQR" ]; then
+          echo "::error::a long name kept an extension fragment: '$name'"; exit 1
+        fi
+        echo "  a long name loses its whole extension, not part of it"
+
+        # A name longer than the 20-byte field is cut to fit. (The clamp that
+        # does it also stops a memcpy past the end of the local buffer, which
+        # only a sanitizer build can observe - the visible name is the same
+        # either way.)
+        ./ps1vmc-tool samples/epsxe000.mcr --extract-save 0 ABCDEFGHIJKLMNOPQRSTUVWXYZ
+        ./ps1vmc-tool long.mcr --mc-create >/dev/null
+        ./ps1vmc-tool long.mcr --inject-save ABCDEFGHIJKLMNOPQRSTUVWXYZ >/dev/null
+        name=$(./ps1vmc-tool long.mcr --list |
+               awk -F'|' '$1 ~ /^ *[0-9]+ *$/ { gsub(/^ +| +$/, "", $2); print $2; exit }')
+        if [ "$name" != "ABCDEFGHIJKLMNOPQRST" ]; then
+          echo "::error::a 26-character name was not cut to 20: '$name'"; exit 1
+        fi
+        echo "  a name longer than the header field is cut to fit"
+
         rm -rf ps1sub 'C:\saves\BASLUS-0125100000-00' BASLUS-0125100000-00 \
                BASLUS-0125100000-00.raw SHORTNAME.raw 'back\slash' \
-               imp.mcr ext.mcr del.mcr soft.mcr
+               imp.mcr ext.mcr del.mcr soft.mcr slot.mcr frag.mcr \
+               ABCDEFGHIJKLMNOPQR.raw ABCDEFGHIJKLMNOPQRSTUVWXYZ long.mcr sub.mcr
 
         rm -f smoke.psu smoke.xps smoke.cbs smoke.max new.vmc round.vmc one.vmc fmt.vmc new.mcr
         echo "smoke tests passed"

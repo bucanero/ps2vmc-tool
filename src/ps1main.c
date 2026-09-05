@@ -88,12 +88,54 @@ static void print_usage(int argc, char **argv)
 	printf("\n");
 }
 
+/*
+ * Parse a slot number from the command line.
+ *
+ * strtol() with a NULL endptr reports nothing about "abc": it returns 0, which
+ * is a real slot, so "--delete abc" deleted slot 0. And nothing here bounded
+ * the result either - mcdata[] is a static array of PS1CARD_MAX_SLOTS entries,
+ * so "--remove 99" read 81 KB past the end of it. (AddressSanitizer does not
+ * flag that one: the offset clears the global's redzone entirely and lands in
+ * other globals, which look like valid memory to it.)
+ *
+ * Returns 0 and stores the slot, or -1 after explaining what was wrong.
+ */
+static int parse_slot(const char *arg, int *slot)
+{
+	char *end;
+	long v;
+
+	if (!arg || !*arg) {
+		fprintf(stderr, "Error: no slot number given (0-%d)\n", PS1CARD_MAX_SLOTS - 1);
+		return -1;
+	}
+
+	v = strtol(arg, &end, 10);
+
+	if (*end != '\0') {
+		fprintf(stderr, "Error: '%s' is not a slot number\n", arg);
+		return -1;
+	}
+
+	if (v < 0 || v >= PS1CARD_MAX_SLOTS) {
+		fprintf(stderr, "Error: slot %ld is out of range (0-%d)\n",
+			v, PS1CARD_MAX_SLOTS - 1);
+		return -1;
+	}
+
+	*slot = (int)v;
+	return 0;
+}
+
 static int cmd_icons(const char* slot)
 {
 	uint8_t *icon;
 	char filename[256];
-	int id = strtol(slot, NULL, 10);
+	int id;
 	ps1mcData_t *mcdata = getMemoryCardData();
+
+	if (parse_slot(slot, &id) < 0)
+		return -1000;
 
 	if (!mcdata)
 		return -1;
@@ -272,8 +314,11 @@ static int cmd_inject(const char *input)
 
 static int cmd_export(const char *slot, const char* filename, int type)
 {
-	int id = strtol(slot, NULL, 10);
+	int id;
 	ps1mcData_t* mcdata = getMemoryCardData();
+
+	if (parse_slot(slot, &id) < 0)
+		return -1000;
 
 	if (!mcdata || mcdata[id].saveType != PS1BLOCK_INITIAL)
 		return -1000;
@@ -290,8 +335,11 @@ static int cmd_export(const char *slot, const char* filename, int type)
 static int cmd_psv_export(const char *slot)
 {
 	char tmp[4], filename[256];
-	int id = strtol(slot, NULL, 10);
+	int id;
 	ps1mcData_t* mcdata = getMemoryCardData();
+
+	if (parse_slot(slot, &id) < 0)
+		return -1000;
 
 	if (!mcdata || mcdata[id].saveType != PS1BLOCK_INITIAL)
 		return -1000;
@@ -324,18 +372,15 @@ static int cmd_psv_export(const char *slot)
  */
 static int cmd_delete(const char *slot, int undelete)
 {
-	int id = strtol(slot, NULL, 10);
+	int id;
 	ps1mcData_t* mcdata = getMemoryCardData();
 	uint8_t type;
 
 	if (!mcdata)
 		return -1000;
 
-	if (id < 0 || id >= PS1CARD_MAX_SLOTS) {
-		fprintf(stderr, "Error: slot %d is out of range (0-%d)\n",
-			id, PS1CARD_MAX_SLOTS - 1);
+	if (parse_slot(slot, &id) < 0)
 		return -1000;
-	}
 
 	type = mcdata[id].saveType;
 
@@ -364,8 +409,11 @@ static int cmd_delete(const char *slot, int undelete)
 
 static int cmd_remove(const char *slot)
 {
-	int id = strtol(slot, NULL, 10);
+	int id;
 	ps1mcData_t* mcdata = getMemoryCardData();
+
+	if (parse_slot(slot, &id) < 0)
+		return -1000;
 
 	if (!mcdata || mcdata[id].saveType != PS1BLOCK_INITIAL)
 		return -1000;

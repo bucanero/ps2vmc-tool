@@ -900,18 +900,25 @@ static void get_save_name_from_path(const char* path, char* out, size_t outsz)
         if (strchr(PATH_SEPARATORS, *p))
             name = p + 1;
 
-    strncpy(out, name, outsz - 1);
-    out[outsz - 1] = 0;
+    //The extension is matched against the whole base name, before any
+    //truncation. Cutting to the header field first leaves a fragment behind
+    //when the name is long: "ABCDEFGHIJKLMNOPQR.raw" would keep a ".r".
+    len = strlen(name);
 
     for (size_t i = 0; i < sizeof(ext) / sizeof(ext[0]); i++)
     {
-        if (ends_with_ci(out, ext[i]))
+        if (ends_with_ci(name, ext[i]))
         {
-            len = strlen(out) - strlen(ext[i]);
-            out[len] = 0;
-            return;
+            len -= strlen(ext[i]);
+            break;
         }
     }
+
+    if (len > outsz - 1)
+        len = outsz - 1;
+
+    memcpy(out, name, len);
+    out[len] = 0;
 }
 
 int openSingleSave(const char* fileName, int* requiredSlots)
