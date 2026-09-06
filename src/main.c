@@ -841,6 +841,20 @@ static int cmd_import(const char *input)
 		return -1004;
 	}
 
+	/* A bad signature is reported, not enforced: several tools wrote .PSV
+	 * files before the HMAC was understood, and those saves import fine. */
+	switch (psv_verify(p, (size_t)filesize)) {
+	case PSV_SIG_BAD:
+		printf("Warning: this save's signature does not match its contents; "
+		       "importing anyway.\n");
+		break;
+	case PSV_SIG_UNSIGNED:
+		printf("Warning: this save carries no signature; importing anyway.\n");
+		break;
+	default:
+		break;
+	}
+
 	ps2md = (ps2_MainDirInfo_t *)&p[0x68];
 	ps2fi = (ps2_FileInfo_t *)&ps2md[1];
 
