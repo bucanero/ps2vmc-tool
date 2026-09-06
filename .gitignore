@@ -50,3 +50,6 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# GitHub Pages staging dir (web/mksite.sh)
+_site/
