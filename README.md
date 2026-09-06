@@ -11,8 +11,8 @@ PS2VMC Tool is a command-line application for managing PS2 virtual memory cards 
 
 Both memory card tools also run in the browser, with nothing to install and nothing uploaded &mdash; the card is read and written locally, and never leaves your machine:
 
-- **[PS2 memory cards](https://bucanero.github.io/ps2vmc-tool/)**
-- **[PS1 memory cards](https://bucanero.github.io/ps2vmc-tool/ps1/)**
+- **[PS2 Memory Card Manager](https://bucanero.github.io/ps2vmc-tool/)**
+- **[PS1 Memory Card Manager](https://bucanero.github.io/ps2vmc-tool/ps1/)**
 
 ## Usage
 
