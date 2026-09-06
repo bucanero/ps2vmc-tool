@@ -4,9 +4,15 @@
 [![License](https://img.shields.io/github/license/bucanero/ps2vmc-tool.svg?maxAge=2592000)](https://github.com/bucanero/ps2vmc-tool/blob/main/LICENSE)
 [![macOS Linux binaries](https://github.com/bucanero/ps2vmc-tool/actions/workflows/build.yml/badge.svg)](https://github.com/bucanero/ps2vmc-tool/actions/workflows/build.yml)
 [![Windows binaries](https://github.com/bucanero/ps2vmc-tool/actions/workflows/build-win.yml/badge.svg)](https://github.com/bucanero/ps2vmc-tool/actions/workflows/build-win.yml)
+[![Web tools](https://github.com/bucanero/ps2vmc-tool/actions/workflows/pages.yml/badge.svg)](https://github.com/bucanero/ps2vmc-tool/actions/workflows/pages.yml)
 [![Twitter](https://img.shields.io/twitter/follow/dparrino?label=Follow)](https://twitter.com/dparrino)
 
 PS2VMC Tool is a command-line application for managing PS2 virtual memory cards directly from the PC.
+
+Both memory card tools also run in the browser, with nothing to install and nothing uploaded &mdash; the card is read and written locally, and never leaves your machine:
+
+- **[PS2 memory cards](https://bucanero.github.io/ps2vmc-tool/)**
+- **[PS1 memory cards](https://bucanero.github.io/ps2vmc-tool/ps1/)**
 
 ## Usage
 

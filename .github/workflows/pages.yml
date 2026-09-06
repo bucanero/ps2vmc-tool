@@ -1,0 +1,80 @@
+#
+# Publish the two browser tools to GitHub Pages.
+#
+#     https://bucanero.github.io/ps2vmc-tool/        the PS2 tool
+#     https://bucanero.github.io/ps2vmc-tool/ps1/    the PS1 tool
+#
+# Nothing is compiled here. Both pages are static, and the WebAssembly module
+# they need is base64 inside web-ps2/ps2vmc-wasm-binary.js, which is checked
+# into the repository (see web-ps2/build.sh) - so a deploy only has to copy the
+# right files and rewrite the two links the pages carry to each other.
+#
+# Before publishing, the assembled site - not the sources - is booted under
+# Node and asked to read a real memory card. That catches the failure this
+# workflow could otherwise ship silently: a file that index.html loads but
+# mksite.sh forgot to copy, which a browser only reports at run time.
+#
+name: Deploy web tools
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-ps1/**'
+      - 'web-ps2/**'
+      - 'web/mksite.sh'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# The token deploy-pages exchanges for the deployment needs id-token: write.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one half-way: a cancelled deploy
+# can leave the site on the previous commit with no obvious sign of why.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Assemble the site
+      run: ./web/mksite.sh _site
+
+    - name: Boot the published bundle and read a card
+      run: |
+        node -e '
+          const fs = require("fs");
+          const PS2VMC = require("./_site/ps2vmc.js");
+          PS2VMC.load().then(vmc => {
+            const card = new Uint8Array(fs.readFileSync("samples/ps2card.vmc"));
+            const info = vmc.openCard(card);
+            const entries = vmc.list("/");
+            if (info.cardSize !== 8 * 1024 * 1024) throw new Error("card size " + info.cardSize);
+            if (!entries.length) throw new Error("no directory entries");
+            console.log("ok: " + info.cardSize / 1048576 + "MB card, "
+                        + entries.length + " entries");
+          }).catch(e => { console.error(e.message); process.exit(1); });
+        '
+
+    - uses: actions/configure-pages@v5
+
+    - uses: actions/upload-pages-artifact@v3
+      with:
+        path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - id: deployment
+      uses: actions/deploy-pages@v4

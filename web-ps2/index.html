@@ -36,6 +36,23 @@ body {
 header.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
 header.top h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
 header.top .ver { font: 12px var(--mono); color: var(--fg-faint); }
+header.top .ver a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+header.top .ver a:hover { color: var(--fg-dim); }
+header.top .hlinks {
+  margin-left: auto; align-self: center;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+header.top .gh {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 500; text-decoration: none;
+  color: var(--fg-dim); background: var(--bg-3);
+  border: 1px solid var(--line-2); border-radius: 8px;
+  padding: 6px 11px; white-space: nowrap;
+  transition: background .12s, border-color .12s, color .12s;
+}
+header.top .gh:hover { background: #262d3a; border-color: #4a5568; color: var(--fg); }
+header.top .gh svg { width: 15px; height: 15px; fill: currentColor; }
+header.top .gh svg.card { fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; }
 .tagline { color: var(--fg-dim); font-size: 13.5px; margin: 0 0 24px; }
 .tagline b { color: var(--fg); font-weight: 600; }
 .tagline a { color: var(--fg-dim); }
@@ -197,7 +214,14 @@ footer a { color: var(--fg-dim); }
 
   <header class="top">
     <h1>PS2 Memory Card Manager</h1>
-    <span class="ver">web build &middot; ps2vmc-tool</span>
+    <span class="ver">web build by <a href="https://github.com/bucanero" target="_blank" rel="noopener">Bucanero</a> &middot; ps2vmc-tool</span>
+    <nav class="hlinks">
+      <a class="gh" href="../web-ps1/index.html" title="Open the PS1 memory card tool">
+        <svg viewBox="0 0 16 16" class="card" aria-hidden="true"><rect x="3.6" y="1.6" width="8.8" height="12.8" rx="1.4"/><path d="M6.1 1.6v3.1M8 1.6v3.1M9.9 1.6v3.1"/></svg>PS1 tool</a>
+      <a class="gh" href="https://github.com/bucanero/ps2vmc-tool" target="_blank" rel="noopener"
+         title="View the source on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a>
+    </nav>
   </header>
   <p class="tagline">
     Browse, edit and repack PlayStation 2 virtual memory cards, with their real animated 3D save icons.
