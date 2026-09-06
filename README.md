@@ -18,7 +18,7 @@ Both memory card tools also run in the browser, with nothing to install and noth
 
 ```
 PS2VMC-TOOL v2.0.0
-Copyright (C) 2023 - by Bucanero
+Copyright (C) 2023-2026 - by Bucanero
 based on ps3mca-tool by jimmikaelkael et al.
 
 Usage:
@@ -58,7 +58,7 @@ PS1VMC Tool is a command-line application for managing PS1 virtual memory cards 
 
 ```
 PS1VMC-TOOL v2.0.0
-Copyright (C) 2024 - by Bucanero
+Copyright (C) 2024-2026 - by Bucanero
 based on MemcardRex by ShendoXT
 
 Usage:

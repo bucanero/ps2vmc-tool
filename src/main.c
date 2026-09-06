@@ -69,7 +69,7 @@ enum ps2vmc_cmd {
 static void print_usage(int argc, char **argv)
 {
 	(void)argc;
-	printf("Copyright (C) 2023 - by Bucanero\n");
+	printf("Copyright (C) 2023-2026 - by Bucanero\n");
 	printf("based on ps3mca-tool by jimmikaelkael et al.\n\n");
 	printf("Usage:\n");
 	printf("%s <VMC filepath> <command> [<arguments>]\n", argv[0]);

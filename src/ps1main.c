@@ -60,7 +60,7 @@ enum ps1vmc_cmd {
 static void print_usage(int argc, char **argv)
 {
 	(void)argc;
-	printf("Copyright (C) 2024 - by Bucanero\n");
+	printf("Copyright (C) 2024-2026 - by Bucanero\n");
 	printf("based on MemcardRex by ShendoXT\n\n");
 	printf("Usage:\n");
 	printf("%s <VMC filepath> <command> [<arguments>]\n", argv[0]);
