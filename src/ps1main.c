@@ -27,6 +27,7 @@
 #include "ps1card.h"
 #include "util.h"
 #include "ps2png.h"
+#include "psv_resign.h"
 
 #define PROGRAM_NAME    "PS1VMC-TOOL"
 #define PROGRAM_VER     "2.0.0"
@@ -312,9 +313,39 @@ static int cmd_list(void)
 	return 0;
 }
 
+/*
+ * A .PSV carries an HMAC-SHA1 over its contents. Report a signature that is
+ * wrong, or absent, and carry on: tools that predate the signature wrote saves without a valid
+ * one, and those import perfectly well.
+ */
+static void warn_psv_signature(const char *input)
+{
+	uint8_t *buf;
+	size_t sz;
+
+	if (read_buffer(input, &buf, &sz) < 0)
+		return;                 /* the importer reports its own read errors */
+
+	switch (psv_verify(buf, sz)) {
+	case PSV_SIG_BAD:
+		printf("Warning: this save's signature does not match its contents; "
+		       "importing anyway.\n");
+		break;
+	case PSV_SIG_UNSIGNED:
+		printf("Warning: this save carries no signature; importing anyway.\n");
+		break;
+	default:
+		break;                  /* valid, or not a PSV at all */
+	}
+
+	free(buf);
+}
+
 static int cmd_inject(const char *input)
 {
 	int r;
+
+	warn_psv_signature(input);
 
 	if (!openSingleSave(input, &r))
 		return r;

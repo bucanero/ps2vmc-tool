@@ -676,6 +676,13 @@ int setSaveBytes(const uint8_t* saveBytes, int saveBytes_Length, int* reqSlots)
     int slotCount = (saveBytes_Length - PS1CARD_HEADER_SIZE) / PS1CARD_BLOCK_SIZE;
     int numberOfBytes = slotCount * PS1CARD_BLOCK_SIZE;
 
+    //A save with no blocks is not a save. Without this the code below
+    //indexes freeSlots[0] before anything has filled it, and reaches
+    //freeSlots[freeSlots_Length - 1] with the length still zero.
+    //Checked before *reqSlots is written, so the caller keeps the -1 it
+    //started with and reports a failure rather than a zero-slot success.
+    if (slotCount < 1) return false;
+
     *reqSlots = slotCount;
     freeSlots_Length = findFreeSlots(slotCount, freeSlots);
 
@@ -937,6 +944,15 @@ int openSingleSave(const char* fileName, int* requiredSlots)
         return false;
     }
 
+    //Every branch below probes a magic byte before it knows the file's
+    //length; the deepest of those is at 0x37. Anything shorter cannot be
+    //a save of any of these formats, and reading it would run off the end.
+    if (inputData_Length < 0x38)
+    {
+        free(inputData);
+        return false;
+    }
+
     //Check the format of the save and if it's supported load it (filter illegal characters from types)
 
     // 'Q':           //MCS single save
@@ -965,7 +981,10 @@ int openSingleSave(const char* fileName, int* requiredSlots)
         memcpy(&finalData[PS1CARD_HEADER_SIZE], inputData, inputData_Length);
     }
     // 'VSP':           //PSV single save (PS3 virtual save)
-    else if (memcmp(inputData, "\0VSP", 4) == 0 && inputData[60] == 1)
+    //The 132 is not cosmetic: the header is copied from offset 100 and the
+    //body length is inputData_Length - 132, which underflows to an enormous
+    //size_t for a shorter file.
+    else if (inputData_Length >= 132 && memcmp(inputData, "\0VSP", 4) == 0 && inputData[60] == 1)
     {
         // Check if this is a PS1 type save
         finalData_Length = inputData_Length - 4;

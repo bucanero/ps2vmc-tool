@@ -618,6 +618,16 @@ async function importSaveFile(file) {
   const F = PS2VMC.FORMAT;
   const fmt = vmc.detect(bytes);
 
+  /* A PSV's signature is checked but never enforced: tools that predate the
+   * HMAC wrote saves without a valid one, and those import perfectly well.
+   * Tell the user, then carry on. */
+  let sigWarning = null;
+  if (fmt === F.PSV) {
+    const sig = PSV.verify(bytes);
+    if (sig === PSV.SIG_BAD)      sigWarning = "This save's signature does not match its contents \u2014 imported anyway.";
+    else if (sig === PSV.SIG_UNSIGNED) sigWarning = "This save carries no signature \u2014 imported anyway.";
+  }
+
   const run = () => {
     if (fmt === F.PSV) vmc.psvImport(bytes);
     else if (fmt === F.PSU) vmc.psuImport(bytes);
@@ -657,6 +667,7 @@ async function importSaveFile(file) {
     markDirty();
     render();
     toast("Imported " + file.name + " (" + PS2VMC.FORMAT_NAME[fmt] + ")", "ok");
+    if (sigWarning) toast(sigWarning, "warn");
   } catch (e) {
     toast("Could not import " + file.name + " — " + e.message, "err");
   }

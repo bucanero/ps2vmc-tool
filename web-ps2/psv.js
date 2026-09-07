@@ -108,6 +108,41 @@
     return signBuffer(psv, SEED_OFFSET, HASH_OFFSET, psv[TYPE_OFFSET]);
   }
 
+  /** Signature check results, matching psv_verify() in src/psv_resign.c. */
+  const SIG_OK = 1, SIG_BAD = 0, SIG_UNSIGNED = -1, SIG_UNKNOWN = -2;
+
+  /**
+   * Check a PSV's signature against its contents, without modifying it.
+   *
+   * A mismatch is worth telling the user about but not worth refusing the
+   * save over: several tools wrote PSV files before the signature was
+   * understood, and those saves are otherwise perfectly good.
+   *
+   * @param {Uint8Array} psv a complete PSV file
+   * @returns {number} SIG_OK, SIG_BAD, SIG_UNSIGNED or SIG_UNKNOWN
+   */
+  function verify(psv) {
+    if (psv.length < 0x84) return SIG_UNKNOWN;
+    if (!(psv[0] === 0x00 && psv[1] === 0x56 && psv[2] === 0x53 && psv[3] === 0x50))
+      return SIG_UNKNOWN;
+    if (psv[TYPE_OFFSET] !== 1 && psv[TYPE_OFFSET] !== 2) return SIG_UNKNOWN;
+
+    const stored = psv.slice(HASH_OFFSET, HASH_OFFSET + 0x14);
+    if (stored.every(b => b === 0)) return SIG_UNSIGNED;
+
+    /* signBuffer() writes only the signature field, and that field has to read
+     * as zeros while the rest is hashed. Let it work in place and put the
+     * original 20 bytes back, rather than copying the whole save to protect
+     * them - the same thing psv_verify() does in src/psv_resign.c. The finally
+     * runs after the comparison, and also if hashing throws. */
+    try {
+      signBuffer(psv, SEED_OFFSET, HASH_OFFSET, psv[TYPE_OFFSET]);
+      return stored.every((b, i) => b === psv[HASH_OFFSET + i]) ? SIG_OK : SIG_BAD;
+    } finally {
+      psv.set(stored, HASH_OFFSET);
+    }
+  }
+
   /**
    * Compute and write a VMP memory card image's signature at 0x20, in place.
    * A VMP is a 0x80-byte header followed by the raw 128 KB card.
@@ -257,7 +292,8 @@
   }
 
   return {
-    sign, signVmp, buildPs1, buildPs2, sha1,
+    sign, verify, signVmp, buildPs1, buildPs2, sha1,
+    SIG_OK, SIG_BAD, SIG_UNSIGNED, SIG_UNKNOWN,
     SALT_SEED, SEED_OFFSET, HASH_OFFSET, TYPE_OFFSET,
     VMP_SEED_OFFSET, VMP_HASH_OFFSET, VMP_SIZE
   };

@@ -110,6 +110,41 @@ static void generateHash(const uint8_t *input, const uint8_t *salt_seed, uint8_t
 	hmac_sha1(salt, sizeof(salt), input, sz, dest);
 }
 
+int psv_verify(uint8_t *psv, size_t len)
+{
+	uint8_t stored[0x14], computed[0x14];
+	int i, signed_at_all = 0;
+
+	if (len < 0x84 || memcmp(psv, "\0VSP", 4) != 0)
+		return PSV_SIG_UNKNOWN;
+
+	if (psv[PSV_TYPE_OFFSET] != PSV_TYPE_PS1 &&
+	    psv[PSV_TYPE_OFFSET] != PSV_TYPE_PS2)
+		return PSV_SIG_UNKNOWN;
+
+	memcpy(stored, psv + PSV_HASH_OFFSET, sizeof(stored));
+
+	for (i = 0; i < (int)sizeof(stored); i++)
+		if (stored[i]) {
+			signed_at_all = 1;
+			break;
+		}
+
+	if (!signed_at_all)
+		return PSV_SIG_UNSIGNED;
+
+	/* generateHash() writes into the file's own signature field, which is
+	 * also what it has to hash as zeros. Let it, then put the original back
+	 * so the caller's buffer comes out exactly as it went in. */
+	generateHash(psv, psv + PSV_SEED_OFFSET, psv + PSV_HASH_OFFSET, len,
+		     psv[PSV_TYPE_OFFSET]);
+	memcpy(computed, psv + PSV_HASH_OFFSET, sizeof(computed));
+	memcpy(psv + PSV_HASH_OFFSET, stored, sizeof(stored));
+
+	return memcmp(stored, computed, sizeof(stored)) == 0 ? PSV_SIG_OK
+							     : PSV_SIG_BAD;
+}
+
 int psv_resign(const char *src_psv)
 {
 	size_t sz;
