@@ -694,13 +694,17 @@ footer a { color: var(--fg-dim); }
     const stored = psv.slice(HASH_OFFSET, HASH_OFFSET + 0x14);
     if (stored.every(b => b === 0)) return SIG_UNSIGNED;
 
-    /* signBuffer() writes into the buffer it hashes, so work on a copy and
-     * leave the caller's bytes alone. */
-    const computed = signBuffer(psv.slice(), SEED_OFFSET, HASH_OFFSET,
-                                psv[TYPE_OFFSET])
-                     .subarray(HASH_OFFSET, HASH_OFFSET + 0x14);
-
-    return stored.every((b, i) => b === computed[i]) ? SIG_OK : SIG_BAD;
+    /* signBuffer() writes only the signature field, and that field has to read
+     * as zeros while the rest is hashed. Let it work in place and put the
+     * original 20 bytes back, rather than copying the whole save to protect
+     * them - the same thing psv_verify() does in src/psv_resign.c. The finally
+     * runs after the comparison, and also if hashing throws. */
+    try {
+      signBuffer(psv, SEED_OFFSET, HASH_OFFSET, psv[TYPE_OFFSET]);
+      return stored.every((b, i) => b === psv[HASH_OFFSET + i]) ? SIG_OK : SIG_BAD;
+    } finally {
+      psv.set(stored, HASH_OFFSET);
+    }
   }
 
   /**

@@ -314,11 +314,11 @@ static int cmd_list(void)
 }
 
 /*
- * A .PSV carries an HMAC-SHA1 over its contents. Report a bad or missing one
- * and carry on: tools that predate the signature wrote saves without a valid
+ * A .PSV carries an HMAC-SHA1 over its contents. Report a signature that is
+ * wrong, or absent, and carry on: tools that predate the signature wrote saves without a valid
  * one, and those import perfectly well.
  */
-static void warn_if_unsigned(const char *input)
+static void warn_psv_signature(const char *input)
 {
 	uint8_t *buf;
 	size_t sz;
@@ -345,7 +345,7 @@ static int cmd_inject(const char *input)
 {
 	int r;
 
-	warn_if_unsigned(input);
+	warn_psv_signature(input);
 
 	if (!openSingleSave(input, &r))
 		return r;
