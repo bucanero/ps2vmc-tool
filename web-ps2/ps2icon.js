@@ -134,7 +134,7 @@
     let guard = 0;
     while (px < 128 * 128 * 4 && o + 2 <= bytes.length && guard++ < 200000) {
       let n = (bytes[o + 1] << 8) | bytes[o];
-      if ((n & 0xff00) === 0xff00) {
+      if (n & 0x8000) {
         n = (0x10000 - n) & 0xffff;
         for (; n > 0 && px < out.length; n--) {
           o += 2;
