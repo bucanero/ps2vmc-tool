@@ -937,6 +937,10 @@ static char sjis_punct(uint8_t lo)
  * are 7-bit. Full-width letters, digits and punctuation have exact
  * equivalents; kana and kanji become '?', since there is nothing to map them
  * to. The Shift-JIS original is written alongside, untouched.
+ *
+ * Two ranges would otherwise slip through as raw high bytes: lead bytes
+ * 0xE0-0xFC (the second kanji level) start a pair just as 0x81-0x9F do, and
+ * half-width katakana are single bytes in 0xA1-0xDF.
  */
 static size_t sjis_to_ascii(const char *src, size_t srclen, char *dst, size_t dstsz)
 {
@@ -962,9 +966,13 @@ static size_t sjis_to_ascii(const char *src, size_t srclen, char *dst, size_t ds
 			dst[o++] = (char)('a' + (lo - 0x81));
 			i += 2;
 		}
-		else if (hi >= 0x81 && hi <= 0x9F && i + 1 < srclen) {
+		else if (((hi >= 0x81 && hi <= 0x9F) || (hi >= 0xE0 && hi <= 0xFC)) && i + 1 < srclen) {
 			dst[o++] = '?';           /* kana or kanji: no ASCII equivalent */
 			i += 2;
+		}
+		else if (hi >= 0xA1 && hi <= 0xDF) {
+			dst[o++] = '?';           /* half-width katakana */
+			i++;
 		}
 		else {
 			dst[o++] = src[i++];      /* already single-byte */
