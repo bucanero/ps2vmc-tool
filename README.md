@@ -14,6 +14,8 @@ Both memory card tools also run in the browser, with nothing to install and noth
 - **[PS2 Memory Card Manager](https://bucanero.github.io/ps2vmc-tool/)**
 - **[PS1 Memory Card Manager](https://bucanero.github.io/ps2vmc-tool/ps1/)**
 
+For Sega Dreamcast VMU memory cards, see [DCVMU Tool](https://github.com/bucanero/dcvmu-tool).
+
 ## Usage
 
 ```

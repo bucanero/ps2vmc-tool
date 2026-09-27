@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### PS2VMC Tool
+
+- `.xps` exports: the ASCII title lines no longer carry raw Shift-JIS bytes.
+  Half-width katakana (single bytes 0xA1-0xDF) went through untouched, and a
+  second-level kanji (lead byte 0xE0-0xFC) came out as a stray high byte plus
+  an ASCII character; both now become `?` like other kana and kanji. The web
+  page's WebAssembly module is rebuilt with the fix.
+
 ## v2.0.0
 
 The first release since `v1.1.2` (October 2024). Both command-line tools go to
