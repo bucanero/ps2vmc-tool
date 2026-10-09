@@ -666,7 +666,7 @@ static int cmd_list(char *path)
 	fd = mcio_mcDopen(path);
 	if (fd >= 0) {
 		struct io_dirent dirent;
-		printf("---------- Filename ----------  |  Type  |   Size   | Attribs | Last Modification (UTC)\n");
+		printf("---------- Filename ----------  |  Type  |   Size   | Attribs | Last Modification (JST)\n");
 		do {
 			r = mcio_mcDread(fd, &dirent);
 			if ((r)) { /* && (strcmp(dirent.name, ".")) && (strcmp(dirent.name, ".."))) { */

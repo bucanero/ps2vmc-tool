@@ -288,3 +288,97 @@ jobs:
         path: |
           ps1vmc-tool
           ps2vmc-tool
+
+  # The FUSE mount is built apart from the tools, since it needs libfuse3. A
+  # Linux runner can mount for real (macOS would need macFUSE approved in
+  # System Settings), so the driver is exercised through the kernel as well
+  # as directly by its tests. Every mount is checked afterwards with
+  # ps2vmc-tool, which shares only mcio with the driver.
+  fuse:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install requirements
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install zlib1g-dev pkg-config fuse3 libfuse3-dev
+
+    - name: Build
+      run: |
+        make ps2 fuse
+
+    # Drives the handlers directly: a scripted pass over every operation,
+    # then random operations checked against an in-memory model.
+    - name: Test the handlers
+      run: |
+        make fuse-test
+
+    - name: Test a real mount
+      run: |
+        set -eo pipefail
+
+        mnt=$(mktemp -d)
+        work=$(mktemp -d)
+
+        mount_card() {
+          ./ps2vmc-fuse "$@" "$mnt" -f &
+          for i in $(seq 50); do mountpoint -q "$mnt" && return 0; sleep 0.2; done
+          echo "::error::mount did not come up"; exit 1
+        }
+        unmount_card() {
+          fusermount3 -u "$mnt"
+          wait
+        }
+
+        # read-only: the card lists as the CLI does, reads match, writes fail
+        cp samples/ps2card.vmc "$work/ro.vmc"
+        before=$(sha1sum < "$work/ro.vmc")
+        mount_card "$work/ro.vmc"
+        ls "$mnt" | grep -qx "BESLES-50325"
+        ./ps2vmc-tool "$work/ro.vmc" --extract-file /BESLES-50325/icon.sys "$work/icon.sys" >/dev/null
+        cmp "$mnt/BESLES-50325/icon.sys" "$work/icon.sys"
+        if touch "$mnt/new" 2>/dev/null; then echo "::error::read-only mount accepted a new file"; exit 1; fi
+        if (echo x >> "$mnt/BESLES-50325/icon.sys") 2>/dev/null; then echo "::error::read-only mount accepted a write"; exit 1; fi
+        unmount_card
+        [ "$(sha1sum < "$work/ro.vmc")" = "$before" ]
+        echo "  read-only mount reads the card and leaves it untouched"
+
+        # read-write: copy a save in, rename, edit, move, delete
+        cp samples/ps2card.vmc "$work/rw.vmc"
+        mount_card "$work/rw.vmc" --write
+        cp -R "$mnt/BESLES-50325" "$mnt/COPY-50325"
+        diff -r "$mnt/BESLES-50325" "$mnt/COPY-50325"
+        mv "$mnt/COPY-50325" "$mnt/RENAMED-50325"
+        printf 'hello\nfrom fuse\n' > "$mnt/RENAMED-50325/note.txt"
+        mv "$mnt/RENAMED-50325/note.txt" "$mnt/note.txt"
+        truncate -s 5 "$mnt/note.txt"
+        rm "$mnt/RENAMED-50325/invsave.inv"
+        mkdir "$mnt/EMPTYDIR"
+        rmdir "$mnt/EMPTYDIR"
+        if mkdir "$mnt/0123456789012345678901234567890123" 2>/dev/null; then
+          echo "::error::a 34-character name was accepted"; exit 1
+        fi
+        unmount_card
+
+        # what the CLI finds on the saved card
+        ./ps2vmc-tool "$work/rw.vmc" --list / | grep -q "RENAMED-50325"
+        if ./ps2vmc-tool "$work/rw.vmc" --list / | grep -q "COPY-50325\|EMPTYDIR"; then
+          echo "::error::renamed or removed folder still on the card"; exit 1
+        fi
+        for f in icon.sys BESLES-50325 PAYNE.ICO; do
+          ./ps2vmc-tool "$work/rw.vmc" --extract-file "/RENAMED-50325/$f" "$work/copy-$f" >/dev/null
+          ./ps2vmc-tool "$work/rw.vmc" --extract-file "/BESLES-50325/$f" "$work/orig-$f" >/dev/null
+          cmp "$work/copy-$f" "$work/orig-$f"
+        done
+        if ./ps2vmc-tool "$work/rw.vmc" --list /RENAMED-50325 | grep -q "invsave.inv"; then
+          echo "::error::deleted file still on the card"; exit 1
+        fi
+        ./ps2vmc-tool "$work/rw.vmc" --extract-file /note.txt "$work/note.txt" >/dev/null
+        [ "$(cat "$work/note.txt")" = "hello" ]
+        ./ps2vmc-tool "$work/rw.vmc" --psu-export /RENAMED-50325 "$work/renamed.psu" | grep -q "successfully"
+        echo "  read-write mount changes are on the card after unmount"
+
+        rm -rf "$mnt" "$work"
+        echo "fuse tests passed"

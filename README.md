@@ -50,6 +50,49 @@ Available commands:
 	 --max-export, -max <mc path> <output filepath>
 ```
 
+## Mounting a card
+
+`ps2vmc-fuse` mounts a PS2 card image as a folder, so saves can be browsed,
+copied, renamed and deleted with Finder, `cp` or any other program:
+
+```
+./ps2vmc-fuse card.vmc ~/ps2card -o backend=fskit
+./ps2vmc-fuse card.vmc ~/ps2card -o backend=fskit --write
+```
+
+Mounts are read-only unless `--write` (`-w`) is given. A read-only mount reads
+the image once and never writes it back, so nothing done through it can change
+the card file. With `--write`, changes are saved to the card file when a
+written file is closed, after each folder or attribute change, and on unmount.
+Each save writes a complete new image beside the old one and renames it over,
+so the file is never left half-written. Unmount with `umount ~/ps2card` on
+macOS or `fusermount3 -u ~/ps2card` on Linux.
+
+A few things follow from the card format:
+
+- Names are limited to 31 characters, and are case-sensitive.
+- Renaming works within a folder. Moving between folders is refused with
+  `EXDEV`, so `mv` copies and deletes instead.
+- macOS bookkeeping files (`._*`, `.DS_Store`, `.Trashes` and the like) are
+  refused, so they do not fill the card.
+- Only the read and write permission bits map onto the card. File owners and
+  extended attributes are not stored.
+- A folder never shrinks: deleting entries frees their space, but the slots
+  stay in the folder, as on a PS2.
+
+It is built separately, see [Building the source code](#building-the-source-code).
+
+On macOS it needs [macFUSE](https://macfuse.github.io/) 5 or later. With
+`-o backend=fskit` it runs as a user-space FSKit extension, which must first be
+turned on under System Settings → General → Login Items & Extensions → File
+System Extensions. If the macFUSE toggle there will not switch on, set the
+list's view to "By Category" and try again. Without that option macFUSE uses
+its kernel extension, which needs separate approval and a reboot.
+
+An app that macOS has not given access to removable or network volumes gets
+"Operation not permitted" when listing the mount, even though the mount itself
+works. Grant it under Privacy & Security → Files & Folders.
+
 ---
 
 # PS1VMC Tool
@@ -127,6 +170,18 @@ the released `.exe` needs no `zlib1.dll`:
 ```
 make ZLIB=-l:libz.a
 ```
+
+The FUSE mount is not part of `make`, since it needs libfuse3 as well. Build it
+with:
+
+```
+make fuse
+```
+
+This needs `pkg-config` and libfuse3: macFUSE on macOS, `libfuse3-dev` on
+Debian and Ubuntu. `make fuse-test` exercises the filesystem without mounting
+anything, on scratch copies of `samples/ps2card.vmc`: a scripted pass over
+every operation, then random operations checked against an in-memory model.
 
 ### Save signing
 

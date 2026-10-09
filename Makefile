@@ -14,6 +14,7 @@ endif
 
 PS1TOOL	=	ps1vmc-tool$(EXE)
 PS2TOOL	=	ps2vmc-tool$(EXE)
+PS2FUSE	=	ps2vmc-fuse$(EXE)
 
 CC	=	gcc
 # tiny-AES compiles ECB out unless asked for it, and the PSV/VMP salt
@@ -45,21 +46,48 @@ PS1_SRC	=	src/ps1main.c src/ps1card.c src/sha256.c $(COMMON_SRC)
 PS2_SRC	=	src/main.c src/mcio.c src/ps2icon.c src/ps2render.c src/ps2save.c src/ps2blank.c \
 		src/lzari.c $(COMMON_SRC)
 
+# Read-only FUSE mount of a PS2 card. Not part of 'all': it needs libfuse3
+# (macFUSE or fuse-t on macOS, libfuse3-dev on Linux). Build with 'make fuse'.
+FUSE_SRC =	src/ps2fuse.c src/mcio.c src/util.c
+FUSE_CFLAGS ?=	$(shell pkg-config --cflags fuse3 2>/dev/null)
+FUSE_LIBS ?=	$(shell pkg-config --libs fuse3 2>/dev/null || echo -lfuse3)
+
 PS1_OBJ	=	$(PS1_SRC:.c=.o)
 PS2_OBJ	=	$(PS2_SRC:.c=.o)
-OBJS	=	$(sort $(PS1_OBJ) $(PS2_OBJ))
+FUSE_OBJ =	$(FUSE_SRC:.c=.o)
+OBJS	=	$(sort $(PS1_OBJ) $(PS2_OBJ) $(FUSE_OBJ))
 DEPS	=	$(OBJS:.o=.d)
 
 all: $(PS1TOOL) $(PS2TOOL)
 
 ps1: $(PS1TOOL)
 ps2: $(PS2TOOL)
+fuse: $(PS2FUSE)
 
 $(PS1TOOL): $(PS1_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(ZLIB) $(MATH)
 
 $(PS2TOOL): $(PS2_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(ZLIB) $(MATH)
+
+$(PS2FUSE): $(FUSE_OBJ)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(FUSE_LIBS)
+
+src/ps2fuse.o: CFLAGS += $(FUSE_CFLAGS)
+
+# The FUSE handlers driven directly, no mount needed: a scripted pass over
+# every operation, then random operations checked against a model, each on a
+# scratch copy of the sample card.
+FUSE_TESTS =	test/fusetest$(EXE) test/fusefuzz$(EXE)
+
+test/%$(EXE): test/%.c src/ps2fuse.c src/mcio.c src/util.c Makefile
+	$(CC) $(CFLAGS) -I./src $(FUSE_CFLAGS) -o $@ $< src/mcio.c src/util.c $(LDFLAGS) $(FUSE_LIBS)
+
+fuse-test: $(FUSE_TESTS)
+	@tmp=$$(mktemp -d) && \
+	cp samples/ps2card.vmc $$tmp/card.vmc && ./test/fusetest $$tmp/card.vmc | grep -v '^ok' && \
+	for seed in 1 2 3; do cp samples/ps2card.vmc $$tmp/card.vmc && ./test/fusefuzz $$tmp/card.vmc 400 $$seed || exit 1; done; \
+	rm -rf $$tmp
 
 # -MMD -MP records which headers each object used, so editing a header
 # rebuilds whatever depends on it instead of leaving a stale object behind.
@@ -69,6 +97,6 @@ $(PS2TOOL): $(PS2_OBJ)
 -include $(DEPS)
 
 clean:
-	-rm -f $(OBJS) $(DEPS) $(PS1TOOL) $(PS2TOOL)
+	-rm -f $(OBJS) $(DEPS) $(PS1TOOL) $(PS2TOOL) $(PS2FUSE) $(FUSE_TESTS)
 
-.PHONY: all ps1 ps2 clean
+.PHONY: all ps1 ps2 fuse fuse-test clean
