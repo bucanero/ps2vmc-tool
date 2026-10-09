@@ -53,6 +53,9 @@ dkms.conf
 
 # The tool itself
 ps*vmc-tool
+ps2vmc-fuse
 
 # GitHub Pages staging dir (web/mksite.sh)
 _site/
+test/fusetest
+test/fusefuzz

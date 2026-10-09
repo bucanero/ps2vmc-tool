@@ -3211,44 +3211,69 @@ int mcio_mcStat(const char *filename, struct io_dirent *dirent)
 	return r;
 }
 
-int mcio_mcSetStat(const char *filename, const struct io_dirent *dirent)
+/* Card_ReadDirEntry hands back a pointer into the cached cluster that holds
+ * the entry, and leaves that cluster first in the cache: edit it in place,
+ * mark the cluster dirty and flush. */
+static int Card_OpenDirEntry(const char *filename, struct MCFsEntry **pfse)
 {
 	int r, fd;
-	struct MCFsEntry *pfse, *pfse2;
-	struct MCCacheEntry *pmce;
+	struct MCFHandle *fh;
 
 	fd = mcio_mcOpen(filename, sceMcFileAttrSubdir | sceMcFileAttrReadable);
 	if (fd < 0)
 		return fd;
 
-	struct MCFHandle *fh = (struct MCFHandle *)&mcio_fdhandles[fd];
+	fh = (struct MCFHandle *)&mcio_fdhandles[fd];
+	int32_t cluster = fh->cluster;
+	int32_t fsindex = fh->fsindex;
 
-	int32_t cluster = Card_GetDirEntryCluster(fh->cluster, fh->fsindex);
-	r = Card_ReadDirEntry(fh->cluster, fh->fsindex, &pfse2);
-	if (r < 0) {
-		mcio_mcClose(fd);
-		return r;
-	}
-	mcio_mcClose(fd);
-
-	r = Card_ReadCluster(cluster, &pmce);
-	if (r < 0)
-		return r;
-
-	pfse = (struct MCFsEntry *)pmce->cl_data;
-	if (pfse->cluster != pfse2->cluster)
-		pfse++;
-	if (pfse->cluster != pfse2->cluster)
-		return r;
-
-	mcio_copy_mcentry(pfse, dirent);
-	pmce->wr_flag = 1;
-
-	r = Card_FlushMCCache();
+	r = mcio_mcClose(fd);
 	if (r != sceMcResSucceed)
 		return r;
 
-	return r;
+	return Card_ReadDirEntry(cluster, fsindex, pfse);
+}
+
+int mcio_mcSetStat(const char *filename, const struct io_dirent *dirent)
+{
+	int r;
+	struct MCFsEntry *pfse;
+
+	/* Matching the entry by its first cluster, as this used to, picks the
+	 * wrong one when both entries of a cluster are empty files (cluster -1). */
+	r = Card_OpenDirEntry(filename, &pfse);
+	if (r != sceMcResSucceed)
+		return r;
+
+	mcio_copy_mcentry(pfse, dirent);
+	(*pmcio_mccache)->wr_flag = -1;
+
+	return Card_FlushMCCache();
+}
+
+int mcio_mcRename(const char *filename, const char *newname)
+{
+	int r;
+	struct MCFsEntry *pfse;
+
+	if (newname[0] == 0 || strchr(newname, '/') != NULL || strlen(newname) >= sizeof(pfse->name))
+		return sceMcResNoEntry;
+
+	r = Card_OpenDirEntry(filename, &pfse);
+	if (r != sceMcResSucceed)
+		return r;
+
+	/* "." and ".." are links, not names, and the root has no entry. */
+	if (pfse->name[0] == '.' && (pfse->name[1] == 0 || (pfse->name[1] == '.' && pfse->name[2] == 0)))
+		return sceMcResDeniedPermit;
+
+	/* A subdirectory's "." points back at its parent entry by position, not
+	 * by name, so renaming in place leaves the tree consistent. */
+	memset(pfse->name, 0, sizeof(pfse->name));
+	strncpy(pfse->name, newname, sizeof(pfse->name) - 1);
+	(*pmcio_mccache)->wr_flag = -1;
+
+	return Card_FlushMCCache();
 }
 
 int mcio_mcCreateCrossLinkedFile(const char *real_filepath, const char *dummy_filepath)

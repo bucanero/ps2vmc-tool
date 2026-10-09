@@ -100,6 +100,7 @@ int mcio_mcRemove(const char *filename);
 int mcio_mcRmDir(const char *dirname);
 int mcio_mcStat(const char *filename, struct io_dirent *dirent);
 int mcio_mcSetStat(const char *filename, const struct io_dirent *dirent);
+int mcio_mcRename(const char *filename, const char *newname);
 
 /* MC error codes */
 #define sceMcResSucceed			 0

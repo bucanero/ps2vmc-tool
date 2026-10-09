@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### PS2VMC FUSE (new)
+
+- `ps2vmc-fuse` mounts a PS2 card image as a filesystem through libfuse3:
+  macFUSE on macOS, including its FSKit backend, and libfuse3 on Linux.
+  Read-only by default; `--write` allows creating, writing, truncating,
+  renaming (within a folder) and deleting files and folders, saving the card
+  back atomically. Built separately with `make fuse`; `make fuse-test` runs
+  its tests without a mount.
+
+### PS2 filesystem (`mcio`)
+
+- `mcio_mcSetStat` found the entry to update by its first cluster, so with two
+  empty files in the same directory cluster it could change the wrong one. It
+  now edits the entry it opened.
+- New `mcio_mcRename` renames an entry in place.
+
 ### PS2VMC Tool
 
 - `.xps` exports: the ASCII title lines no longer carry raw Shift-JIS bytes.
