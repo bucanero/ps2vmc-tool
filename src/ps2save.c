@@ -30,6 +30,7 @@
 
 #include "ps2save.h"
 #include "lzari.h"
+#include "util.h"
 
 #define CBS_MAGIC       "CFU\0"
 
@@ -132,8 +133,8 @@ static uint16_t mode_swap(uint32_t m)
 
 static void now_datetime(struct sceMcStDateTime *dt)
 {
-	time_t t = time(NULL);
-	struct tm *tm = gmtime(&t);
+	struct tm now;
+	struct tm *tm = gmtime_jst(time(NULL), &now);
 
 	memset(dt, 0, sizeof(*dt));
 	if (!tm)

@@ -157,3 +157,18 @@ int write_buffer(const char *file_path, uint8_t *buf, size_t size)
 
 	return 0;
 }
+
+/* Break t down as the wall-clock time in Japan, for a card timestamp. Plain
+ * gmtime(), not gmtime_r(), so the mingw builds need nothing extra. */
+struct tm *gmtime_jst(time_t t, struct tm *out)
+{
+	struct tm *tm;
+
+	t += PS2_JST_OFFSET;
+	tm = gmtime(&t);
+	if (tm == NULL)
+		return NULL;
+
+	*out = *tm;
+	return out;
+}

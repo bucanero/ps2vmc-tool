@@ -50,8 +50,8 @@ static const char BLANK_VERSION[] = "1.2.0.0";
 
 static void put_now(uint8_t *p)
 {
-	time_t t = time(NULL);
-	struct tm *tm = gmtime(&t);
+	struct tm now;
+	struct tm *tm = gmtime_jst(time(NULL), &now);
 
 	memset(p, 0, 8);
 	if (!tm)

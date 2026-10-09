@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <time.h>
 
 void memrcpy(void *dst, void *src, size_t len);
 void memxor(const void *a, const void *b, void *Result, size_t Length);
@@ -33,6 +34,12 @@ void append_le_uint64(uint8_t *buf, uint64_t val);
 uint16_t read_le_uint16(const uint8_t *buf);
 uint32_t read_le_uint32(const uint8_t *buf);
 uint64_t read_le_uint64(const uint8_t *buf);
+
+/* PS2 memory cards keep every timestamp in Japan Standard Time (UTC+9),
+ * whatever time zone the console itself is set to. */
+#define PS2_JST_OFFSET	(9 * 60 * 60)
+
+struct tm *gmtime_jst(time_t t, struct tm *out);
 
 int read_buffer(const char *file_path, uint8_t **buf, size_t *size);
 int write_buffer(const char *file_path, uint8_t *buf, size_t size);

@@ -121,6 +121,20 @@ int main(int argc, char **argv)
 		CHECK(ps2_utimens("/TESTDIR2/b.bin", tv, NULL) == 0, "utimens");
 		ps2_getattr("/TESTDIR2/b.bin", &st, NULL);
 		CHECK(st.st_mtime == 1188691200, "mtime %ld", (long)st.st_mtime);
+		/* stored as the card keeps it: Japan time, nine hours ahead */
+		struct io_dirent d;
+		mcio_mcStat("/TESTDIR2/b.bin", &d);
+		CHECK(d.stat.mtime.Year == 2007 && d.stat.mtime.Month == 9 && d.stat.mtime.Day == 2 &&
+		      d.stat.mtime.Hour == 9 && d.stat.mtime.Min == 0, "raw mtime %04d-%02d-%02d %02d:%02d",
+		      d.stat.mtime.Year, d.stat.mtime.Month, d.stat.mtime.Day, d.stat.mtime.Hour, d.stat.mtime.Min);
+	}
+	/* a file just written reads back as now, not nine hours off */
+	{
+		struct stat st;
+		CHECK(put("/TESTDIR2/now.bin", a, 10, 10) == 0, "put now");
+		ps2_getattr("/TESTDIR2/now.bin", &st, NULL);
+		CHECK(labs((long)(st.st_mtime - time(NULL))) < 5, "new file mtime off by %ld s", (long)(st.st_mtime - time(NULL)));
+		ps2_unlink("/TESTDIR2/now.bin");
 	}
 
 	/* unlink and rmdir */

@@ -292,11 +292,13 @@ static int mcio_chrpos(char *str, char chr)
 
 static void mcio_getmcrtime(struct sceMcStDateTime *mc_time)
 {
-	time_t rawtime;
-	struct tm *ptm;
+	struct tm tm, *ptm;
 
-	time(&rawtime);
-	ptm = gmtime(&rawtime);
+	ptm = gmtime_jst(time(NULL), &tm);
+	if (ptm == NULL) {
+		memset(mc_time, 0, sizeof(*mc_time));
+		return;
+	}
 
 	mc_time->Resv2 = 0;
 	mc_time->Sec = ptm->tm_sec;

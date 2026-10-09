@@ -146,7 +146,7 @@ fail:
 	return -EIO;
 }
 
-/* The rest of this tool reads and writes card timestamps as UTC. */
+/* Card timestamps are Japan time; the host wants seconds since the epoch. */
 static time_t mc_time(const struct sceMcStDateTime *t)
 {
 	struct tm tm;
@@ -162,14 +162,17 @@ static time_t mc_time(const struct sceMcStDateTime *t)
 	tm.tm_mon = t->Month - 1;
 	tm.tm_year = t->Year - 1900;
 
-	return timegm(&tm);
+	return timegm(&tm) - PS2_JST_OFFSET;
 }
 
 static void set_mc_time(struct sceMcStDateTime *t, time_t when)
 {
 	struct tm tm;
 
-	gmtime_r(&when, &tm);
+	if (gmtime_jst(when, &tm) == NULL) {
+		memset(t, 0, sizeof(*t));
+		return;
+	}
 	t->Resv2 = 0;
 	t->Sec = tm.tm_sec;
 	t->Min = tm.tm_min;
